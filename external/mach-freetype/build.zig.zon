@@ -1,0 +1,32 @@
+.{
+    .name = "mach_freetype",
+    .version = "0.0.0",
+    .paths = .{
+        "examples",
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE.freetype",
+        "README.md",
+    },
+    .dependencies = .{
+        .freetype = .{
+            .url = "https://pkg.machengine.org/freetype/e8c5b37f320db03acba410d993441815bc809606.tar.gz",
+            .hash = "1220babb7939707ca390b934657dfd3c8c3a6a78cc9442e4cbd43e3f9ffd49daec9e",
+            .lazy = true,
+        },
+        .harfbuzz = .{
+            .url = "https://pkg.machengine.org/harfbuzz/cecd5c8d34d343c0ab8b4dc6d2b0e2c08da52936.tar.gz",
+            .hash = "1220557b115b730afbece2ff4a073b6dc095d143318ba2f6b258cee13f580dd7e8ba",
+            .lazy = true,
+        },
+        .font_assets = .{
+            .url = "https://pkg.machengine.org/font-assets/899f16b815fde126ba8f6fb781e65253f461b7bf.tar.gz",
+            .hash = "12202b816e7c31c516bd87218fd56f9b1f93671e4ab42a2a98110d586c4b3bdd2730",
+            .lazy = true,
+        },
+    },
+}
