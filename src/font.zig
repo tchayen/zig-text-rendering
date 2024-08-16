@@ -94,12 +94,15 @@ pub const TextRendering = struct {
             const glyph = self.ft_face.glyph();
             const metrics = glyph.metrics();
 
-            const offset_x = @as(f32, @floatFromInt(pos.x_offset)) / HARFBUZZ_FACTOR + @as(f32, @floatFromInt(metrics.horiBearingX)) / HARFBUZZ_FACTOR;
-            const offset_y = @as(f32, @floatFromInt(pos.y_offset)) / HARFBUZZ_FACTOR - @as(f32, @floatFromInt(metrics.horiBearingY)) / HARFBUZZ_FACTOR;
-            const advance_x = @as(f32, @floatFromInt(pos.x_advance)) / HARFBUZZ_FACTOR;
-            const advance_y = @as(f32, @floatFromInt(pos.y_advance)) / HARFBUZZ_FACTOR;
+            const offset_x = @as(f32, @floatFromInt(pos.x_offset)) + @as(f32, @floatFromInt(metrics.horiBearingX));
+            const offset_y = @as(f32, @floatFromInt(pos.y_offset)) - @as(f32, @floatFromInt(metrics.horiBearingY));
+            const advance_x = @as(f32, @floatFromInt(pos.x_advance));
+            const advance_y = @as(f32, @floatFromInt(pos.y_advance));
 
-            return_positions[i] = .{ cursor_x + offset_x, cursor_y + offset_y };
+            return_positions[i] = .{
+                (cursor_x + offset_x) / HARFBUZZ_FACTOR,
+                (cursor_y + offset_y) / HARFBUZZ_FACTOR,
+            };
 
             cursor_x += advance_x;
             cursor_y += advance_y;
