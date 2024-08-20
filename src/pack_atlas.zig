@@ -6,10 +6,10 @@ const expectEqual = std.testing.expectEqual;
 
 const Rectangle = struct {
     id: u32,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
 };
 
 const Node = struct {
@@ -20,10 +20,8 @@ const Node = struct {
 
 pub const Packing = struct {
     size: u32,
-    positions: [][2]f32,
+    positions: [][2]u32,
 };
-
-const EPSILON: f32 = 0.00001;
 
 /// Packs rectangles into a square texture atlas. Due to how the algorithm
 /// works, there needs to be an initial estimation of size. The base value is a
@@ -31,12 +29,12 @@ const EPSILON: f32 = 0.00001;
 ///
 /// If the `area_factor` is too small the program will crash - this should be
 /// fixed.
-pub fn pack(allocator: std.mem.Allocator, sizes: [][2]f32, area_factor: f32) !Packing {
-    const positions = try allocator.alloc([2]f32, sizes.len);
+pub fn pack(allocator: std.mem.Allocator, sizes: [][2]u32, area_factor: f32) !Packing {
+    const positions = try allocator.alloc([2]u32, sizes.len);
 
     var area: f32 = 0;
     for (sizes) |size| {
-        area += size[0] * size[1];
+        area += @as(f32, @floatFromInt(size[0])) * @as(f32, @floatFromInt(size[1]));
     }
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -45,11 +43,11 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]f32, area_factor: f32) !Pa
 
     var rectangles = try arena_allocator.alloc(Rectangle, sizes.len);
     for (sizes, 0..) |size, i| {
-        rectangles[i] = .{ .id = @as(u32, @intCast(i)), .x = 0, .y = 0, .width = size[0], .height = size[1] };
+        rectangles[i] = .{ .id = @intCast(i), .x = 0, .y = 0, .width = size[0], .height = size[1] };
     }
     std.mem.sort(Rectangle, rectangles, {}, sortBySizeFn);
 
-    const approximateSize = @ceil(@sqrt(area) * area_factor);
+    const approximateSize: u32 = @intFromFloat(@ceil(@sqrt(area) * area_factor));
 
     const root = try arena_allocator.create(Node);
     root.* = .{
@@ -77,8 +75,8 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]f32, area_factor: f32) !Pa
     queueSize += 1;
 
     // Breadth-first search traverse the graph and find actual width and height.
-    var realWidth: f32 = 0;
-    var realHeight: f32 = 0;
+    var realWidth: u32 = 0;
+    var realHeight: u32 = 0;
     while (queueSize > 0) {
         queueSize -= 1;
         const node = queue[queueSize];
@@ -99,7 +97,7 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]f32, area_factor: f32) !Pa
     }
 
     return Packing{
-        .size = ceilPowerOfTwo(@intFromFloat(@ceil(@max(realWidth, realHeight)))),
+        .size = ceilPowerOfTwo(@max(realWidth, realHeight)),
         .positions = positions,
     };
 }
@@ -113,7 +111,7 @@ fn ceilPowerOfTwo(value: u32) u32 {
 }
 
 fn sign(value: f32) i32 {
-    return @as(i32, if (value > 0) 1 else if (value < 0) -1 else 0);
+    return if (value > 0) 1 else if (value < 0) -1 else 0;
 }
 
 fn sortBySizeFn(context: void, a: Rectangle, b: Rectangle) bool {
@@ -142,9 +140,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
         }
 
         // If the new rectangle fits perfectly, accept.
-        if (math.approxEqAbs(f32, node.rectangle.width, rectangle.width, EPSILON) and
-            math.approxEqAbs(f32, node.rectangle.height, rectangle.height, EPSILON))
-        {
+        if (node.rectangle.width == rectangle.width and node.rectangle.height == rectangle.height) {
             node.rectangle.id = rectangle.id;
             return node;
         }
@@ -199,7 +195,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
 
 test "packing" {
     const allocator = std.testing.allocator;
-    const sizes = [_][2]f32{
+    const sizes = [_][2]u32{
         .{ 1, 1 },
         .{ 2, 2 },
         .{ 1, 1 },

@@ -14,8 +14,6 @@ const Triangle = @import("triangle.zig").Triangle;
 const content_dir = @import("build_options").content_dir;
 const window_title = "zig text rendering";
 
-const ttf = @embedFile("./assets/InterVariable.ttf");
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -58,12 +56,7 @@ pub fn main() !void {
     var triangle = Triangle.init(gctx);
     defer triangle.deinit();
 
-    var mutable_roboto_ttf = try allocator.alloc(u8, ttf.len);
-    _ = &mutable_roboto_ttf;
-    defer allocator.free(mutable_roboto_ttf);
-    @memcpy(mutable_roboto_ttf, ttf);
-
-    var text_rendering = try font.TextRendering.init(allocator, gctx, mutable_roboto_ttf);
+    var text_rendering = try font.TextRendering.init(allocator, gctx);
     defer text_rendering.deinit();
 
     var printer = try Printer.init(allocator, gctx, &text_rendering);
@@ -72,22 +65,16 @@ pub fn main() !void {
     var debug_font_atlas = DebugFontAtlas.init(gctx, text_rendering.atlas_texture);
     defer debug_font_atlas.deinit();
 
+    // try printer.text("This text is now tiny, readable and does not really resemble the original font (hinting!)", 200, 200);
+    try printer.text("Test", 200, 200);
+    try printer.text("नमस्ते", 200, 225);
+    try printer.text("\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947}", 200, 225);
+    try printer.text("привіт", 200, 250);
+    // try printer.text("This text", 200, 275);
+    try draw(gctx, &triangle, &debug_font_atlas, &printer);
+
     while (!window.shouldClose() and window.getKey(.escape) != .press) {
         zglfw.pollEvents();
-        {
-            printer.begin_frame();
-
-            try printer.text("If this sentence is easy to read then it means this whole thing works", 70, 120);
-            try printer.text("There is a font atlas texture with all characters I am using and then all text (every single letter you see) is rendered in one draw call, as instanced quads.", 30, 700);
-            try printer.text("The atlas is displayed on the right. Not sure why it's upside down, I am probably doing symmetric errors somewhere that otherwise cancel out.", 30, 730);
-            try printer.text("One of the hopes when switching to bitmap-based FreeType rendering was to fix the SDF problem of blurry text in small text sizes.", 30, 760);
-            try printer.text("But it seems that my rendering approach has another major issue that still persists in small sizes - pixel perfect positioning.", 30, 790);
-            try printer.text("It affects all text but is especially visible in small ones where one pixel to the right makes the whole text feel weird.", 30, 820);
-            try printer.text("It won't be fixed by making pixel positions fractional since then some letters would appear blurry.", 30, 850);
-
-            printer.end_frame();
-        }
-        draw(gctx, &triangle, &debug_font_atlas, &printer);
     }
 }
 
@@ -96,10 +83,10 @@ fn draw(
     triangle: *Triangle,
     debug_font_atlas: *DebugFontAtlas,
     printer: *Printer,
-) void {
+) !void {
     const fb_width = gctx.swapchain_descriptor.width;
     const fb_height = gctx.swapchain_descriptor.height;
-    const t = @as(f32, @floatCast(gctx.stats.time));
+    const t: f32 = @floatCast(gctx.stats.time);
 
     const cam_world_to_view = zm.lookAtLh(
         zm.f32x4(3.0, 3.0, -3.0, 1.0),
@@ -152,6 +139,8 @@ fn draw(
 
             pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
             pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+            pass.setBlendConstant(.{ .r = 0, .g = 0, .b = 0, .a = 0 });
 
             pass.setPipeline(pipeline);
 
@@ -219,39 +208,7 @@ fn draw(
             pass.draw(6, 1, 0, 0);
         }
 
-        text: {
-            const vb_info = gctx.lookupResourceInfo(printer.vertex_buffer) orelse break :text;
-            const pipeline = gctx.lookupResource(printer.pipeline) orelse break :text;
-            const bind_group = gctx.lookupResource(printer.bind_group) orelse break :text;
-            const depth_view = gctx.lookupResource(printer.depth_texture_view) orelse break :text;
-
-            const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                .view = back_buffer_view,
-                .load_op = .load,
-                .store_op = .store,
-            }};
-            const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                .view = depth_view,
-                .depth_load_op = .clear,
-                .depth_store_op = .store,
-                .depth_clear_value = 1.0,
-            };
-            const render_pass_info = wgpu.RenderPassDescriptor{
-                .color_attachment_count = color_attachments.len,
-                .color_attachments = &color_attachments,
-                .depth_stencil_attachment = &depth_attachment,
-            };
-            const pass = encoder.beginRenderPass(render_pass_info);
-            defer {
-                pass.end();
-                pass.release();
-            }
-
-            pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-            pass.setPipeline(pipeline);
-            pass.setBindGroup(0, bind_group, &.{0});
-            pass.draw(6, printer.glyph_count, 0, 0);
-        }
+        try printer.draw(back_buffer_view, encoder);
 
         break :commands encoder.finish(null);
     };

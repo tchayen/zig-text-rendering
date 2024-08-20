@@ -5,81 +5,43 @@ const zm = @import("zmath");
 const TextRendering = @import("font.zig").TextRendering;
 const utils = @import("utils.zig");
 
-const GlyphStruct = struct {
-    position: [2]f32,
-    size: [2]f32,
-    uv: [4]f32,
-    color: [4]f32,
-};
-
 const wgsl_vs =
-    \\ override screen_width: f32;
-    \\ override screen_height: f32;
-    \\
-    \\ struct Glyph {
-    \\     position: vec2f,
-    \\     size: vec2f,
-    \\     uv: vec4f,
-    \\     color: vec4f,
-    \\ };
-    \\
-    \\ struct UniformStorage {
-    \\     glyphs: array<Glyph>,
-    \\ };
-    \\
-    \\ @group(0) @binding(0) var<storage> data: UniformStorage;
-    \\
-    \\ struct VertexOut {
-    \\     @builtin(position) position: vec4f,
-    \\     @location(0) @interpolate(flat) instance: u32,
+    \\ struct VertexIn {
+    \\     @location(0) position: vec2f,
     \\     @location(1) uv: vec2f,
     \\ };
     \\
-    \\ @vertex fn main(
-    \\     @location(0) position: vec2f,
-    \\     @builtin(instance_index) instance: u32,
-    \\ ) -> VertexOut {
-    \\     var output: VertexOut;
-    \\     let r = data.glyphs[instance];
-    \\     let vertex = mix(r.position, r.position + r.size, position);
-    \\     let uv = mix(r.uv.xy, r.uv.xy + r.uv.zw, position);
-    \\     let screen_size: vec2f = vec2f(screen_width, screen_height);
-    \\     output.position = vec4f(vertex / screen_size * 2.0 - 1.0, 0.0, 1.0);
-    \\     output.position.y *= -1.0;
-    \\     output.instance = instance;
-    \\     output.uv = uv;
-    \\     return output;
+    \\ struct VertexOut {
+    \\     @builtin(position) position: vec4f,
+    \\     @location(1) uv: vec2f,
+    \\ };
+    \\
+    \\ @vertex fn main(in: VertexIn) -> VertexOut {
+    \\     var out: VertexOut;
+    \\     out.position = vec4f(in.position, 0.0, 1.0);
+    \\     out.uv = in.uv;
+    \\     return out;
     \\ }
 ;
 const wgsl_fs =
-    \\ struct Glyph {
-    \\     position: vec2f,
-    \\     size: vec2f,
-    \\     uv: vec4f,
-    \\     color: vec4f,
-    \\ };
-    \\
-    \\ struct UniformStorage {
-    \\     glyphs: array<Glyph>,
-    \\ };
-    \\
-    \\ @group(0) @binding(0) var<storage> data: UniformStorage;
-    \\ @group(0) @binding(1) var myTexture: texture_2d<f32>;
-    \\ @group(0) @binding(2) var mySampler: sampler;
-    \\
     \\ struct VertexOut {
     \\     @builtin(position) position: vec4f,
-    \\     @location(0) @interpolate(flat) instance: u32,
     \\     @location(1) uv: vec2f,
     \\ };
     \\
-    \\ @fragment fn main(input: VertexOut) -> @location(0) vec4f {
-    \\     let r = data.glyphs[input.instance];
-    \\     let a = textureSample(myTexture, mySampler, input.uv).r;
-    \\     return vec4f(r.color.rgb, r.color.a * a);
+    \\ @group(0) @binding(0) var t: texture_2d<f32>;
+    \\ @group(0) @binding(1) var s: sampler;
     \\
+    \\ @fragment fn main(in: VertexOut) -> @location(0) vec4f {
+    \\     let a = textureSample(t, s, in.uv).r;
+    \\     return vec4f(vec3f(1), a) + vec4f(vec3f(1), 0.4);
     \\ }
 ;
+
+const Command = struct {
+    position: [2]f32,
+    text: []const u8,
+};
 
 /// Printer prints text on the screen.
 pub const Printer = struct {
@@ -89,19 +51,20 @@ pub const Printer = struct {
 
     pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
-    vertex_buffer: zgpu.BufferHandle,
-    storage_buffer: zgpu.BufferHandle,
     depth_texture: zgpu.TextureHandle,
     depth_texture_view: zgpu.TextureViewHandle,
 
-    glyph_count: u32,
-    storage_array: []GlyphStruct,
+    command_count: u32,
+    commands: []Command,
 
-    pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, text_rendering: *TextRendering) !Printer {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        gctx: *zgpu.GraphicsContext,
+        text_rendering: *TextRendering,
+    ) !Printer {
         const bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .read_only_storage, true, 0),
-            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d, false),
-            zgpu.samplerEntry(2, .{ .fragment = true }, .filtering),
+            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
+            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
         });
         defer gctx.releaseResource(bind_group_layout);
 
@@ -118,10 +81,12 @@ pub const Printer = struct {
             .format = zgpu.GraphicsContext.swapchain_format,
             .blend = &.{
                 .alpha = .{
-                    .src_factor = .src_alpha,
+                    .operation = .add,
+                    .src_factor = .one,
                     .dst_factor = .one_minus_src_alpha,
                 },
                 .color = .{
+                    .operation = .add,
                     .src_factor = .src_alpha,
                     .dst_factor = .one_minus_src_alpha,
                 },
@@ -130,9 +95,10 @@ pub const Printer = struct {
 
         const vertex_attributes = [_]wgpu.VertexAttribute{
             .{ .format = .float32x2, .offset = 0, .shader_location = 0 },
+            .{ .format = .float32x2, .offset = 2 * @sizeOf(f32), .shader_location = 1 },
         };
         const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
-            .array_stride = 2 * @sizeOf(f32),
+            .array_stride = 4 * @sizeOf(f32),
             .attribute_count = vertex_attributes.len,
             .attributes = &vertex_attributes,
         }};
@@ -143,17 +109,6 @@ pub const Printer = struct {
                 .entry_point = "main",
                 .buffer_count = vertex_buffers.len,
                 .buffers = &vertex_buffers,
-                .constant_count = 2,
-                .constants = &.{
-                    .{
-                        .key = "screen_width",
-                        .value = @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
-                    },
-                    .{
-                        .key = "screen_height",
-                        .value = @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
-                    },
-                },
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
@@ -162,8 +117,7 @@ pub const Printer = struct {
             },
             .depth_stencil = &wgpu.DepthStencilState{
                 .format = .depth32_float,
-                .depth_write_enabled = true,
-                .depth_compare = .less,
+                .depth_write_enabled = false,
             },
             .fragment = &wgpu.FragmentState{
                 .module = fs_module,
@@ -175,35 +129,26 @@ pub const Printer = struct {
         const pipeline = gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
 
         const sampler = gctx.createSampler(.{
-            .mag_filter = .nearest,
-            .min_filter = .nearest,
-            .mipmap_filter = .nearest,
+            .mag_filter = .linear,
+            .min_filter = .linear,
+            .mipmap_filter = .linear,
+            .address_mode_u = .clamp_to_edge,
+            .address_mode_v = .clamp_to_edge,
+            .address_mode_w = .clamp_to_edge,
             .max_anisotropy = 1,
         });
 
         const atlas_texture_view = gctx.createTextureView(text_rendering.atlas_texture, .{});
 
-        const storage_buffer = gctx.createBuffer(.{
-            .usage = .{ .storage = true, .copy_dst = true },
-            .size = 1000 * @sizeOf(GlyphStruct),
-        });
-
         const bind_group = gctx.createBindGroup(bind_group_layout, &.{
-            .{ .binding = 0, .buffer_handle = storage_buffer, .size = 1000 * @sizeOf(GlyphStruct) },
-            .{ .binding = 1, .texture_view_handle = atlas_texture_view },
-            .{ .binding = 2, .sampler_handle = sampler },
+            .{ .binding = 0, .texture_view_handle = atlas_texture_view },
+            .{ .binding = 1, .sampler_handle = sampler },
         });
-
-        const vertex_buffer = gctx.createBuffer(.{
-            .usage = .{ .copy_dst = true, .vertex = true },
-            .size = 12 * @sizeOf(f32),
-        });
-        const vertex_data = [_]f32{ 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1 };
-        gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer).?, 0, f32, vertex_data[0..]);
 
         const depth = utils.createDepthTexture(gctx);
 
-        const storage_array = try allocator.alloc(GlyphStruct, 1000);
+        const commands = try allocator.alloc(Command, 1024);
+        @memset(commands, .{ .position = .{ 0, 0 }, .text = "" });
 
         return Printer{
             .gctx = gctx,
@@ -212,67 +157,141 @@ pub const Printer = struct {
 
             .pipeline = pipeline,
             .bind_group = bind_group,
-            .vertex_buffer = vertex_buffer,
-            .storage_buffer = storage_buffer,
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
 
-            .storage_array = storage_array,
-            .glyph_count = 0,
+            .command_count = 0,
+            .commands = commands,
         };
     }
 
     pub fn text(self: *Printer, value: []const u8, x: f32, y: f32) !void {
-        const positions = try self.text_rendering.shape(self.allocator, value);
-        defer self.allocator.free(positions);
+        self.commands[self.command_count] = .{ .position = .{ x, y }, .text = value };
+        self.command_count += 1;
+    }
 
-        const MARGIN = 1.0;
-
-        for (value, positions) |char, position| {
-            const v = self.text_rendering.glyph_map.get(char) orelse continue;
-            const atlas_size: f32 = @floatFromInt(self.text_rendering.atlas_size);
-            self.storage_array[self.glyph_count] = .{
-                .position = [_]f32{ x + position[0], y + position[1] },
-                .size = [_]f32{ v.size[0] - 2, v.size[1] - 2 },
-                .uv = [_]f32{
-                    (v.position[0] + MARGIN) / atlas_size,
-                    (v.position[1] + MARGIN) / atlas_size,
-                    (v.size[0] - 2 * MARGIN) / atlas_size,
-                    (v.size[1] - 2 * MARGIN) / atlas_size,
-                },
-                .color = [_]f32{ 1, 1, 1, 1 },
-            };
-            self.glyph_count += 1;
+    pub fn draw(
+        self: *Printer,
+        back_buffer_view: zgpu.wgpu.TextureView,
+        encoder: zgpu.wgpu.CommandEncoder,
+    ) !void {
+        var glyphs: u32 = 0;
+        for (0..self.command_count) |i| {
+            glyphs += @intCast(self.commands[i].text.len);
         }
-    }
 
-    pub fn begin_frame(self: *Printer) void {
-        self.glyph_count = 0;
-    }
-
-    pub fn end_frame(self: *Printer) void {
-        @memset(self.storage_array[self.glyph_count..], .{
-            .position = [_]f32{ 0, 0 },
-            .size = [_]f32{ 0, 0 },
-            .uv = [_]f32{ 0, 0, 0, 0 },
-            .color = [_]f32{ 0, 0, 0, 0 },
+        const vertex_buffer = self.gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .vertex = true },
+            .size = glyphs * 2 * 12 * @sizeOf(f32),
         });
-        self.gctx.queue.writeBuffer(
-            self.gctx.lookupResource(self.storage_buffer).?,
-            0,
-            GlyphStruct,
-            self.storage_array[0..self.glyph_count],
-        );
+        defer self.gctx.releaseResource(vertex_buffer);
+
+        const vertex_data = try self.allocator.alloc(f32, glyphs * 2 * 12);
+        defer self.allocator.free(vertex_data);
+
+        var i: u32 = 0;
+        for (0..self.command_count) |c| {
+            const value = self.commands[c];
+            const positions = try self.text_rendering.shape(self.allocator, value.text);
+            defer self.allocator.free(positions);
+
+            for (value.text, positions) |char, position| {
+                const v = self.text_rendering.glyph_map.get(char) orelse continue;
+                const atlas_size: f32 = @floatFromInt(self.text_rendering.atlas_size);
+
+                const p_x: f32 = @floatFromInt(v.position[0]);
+                const p_y: f32 = @floatFromInt(v.position[1]);
+                const s_x: f32 = @floatFromInt(v.size[0]);
+                const s_y: f32 = @floatFromInt(v.size[1]);
+
+                const x = (value.position[0] + position[0]) / 1600 * 2 - 1;
+                const y = -((value.position[1] + position[1]) / 1000 * 2 - 1);
+                const w: f32 = s_x / 1600 * 2;
+                const h: f32 = s_y / 1000 * 2;
+
+                // 0
+                vertex_data[i + 0] = x;
+                vertex_data[i + 1] = y - h;
+                vertex_data[i + 2] = p_x / atlas_size;
+                vertex_data[i + 3] = (p_y + s_y) / atlas_size;
+
+                // 1
+                vertex_data[i + 4] = x + w;
+                vertex_data[i + 5] = y - h;
+                vertex_data[i + 6] = (p_x + s_x) / atlas_size;
+                vertex_data[i + 7] = (p_y + s_y) / atlas_size;
+
+                // 2
+                vertex_data[i + 8] = x;
+                vertex_data[i + 9] = y;
+                vertex_data[i + 10] = p_x / atlas_size;
+                vertex_data[i + 11] = p_y / atlas_size;
+
+                // 3
+                vertex_data[i + 12] = x + w;
+                vertex_data[i + 13] = y - h;
+                vertex_data[i + 14] = (p_x + s_x) / atlas_size;
+                vertex_data[i + 15] = (p_y + s_y) / atlas_size;
+
+                // 4
+                vertex_data[i + 16] = x + w;
+                vertex_data[i + 17] = y;
+                vertex_data[i + 18] = (p_x + s_x) / atlas_size;
+                vertex_data[i + 19] = p_y / atlas_size;
+
+                // 5
+                vertex_data[i + 20] = x;
+                vertex_data[i + 21] = y;
+                vertex_data[i + 22] = p_x / atlas_size;
+                vertex_data[i + 23] = p_y / atlas_size;
+
+                i += 24;
+            }
+        }
+
+        self.gctx.queue.writeBuffer(self.gctx.lookupResource(vertex_buffer).?, 0, f32, vertex_data[0..]);
+
+        const vb_info = self.gctx.lookupResourceInfo(vertex_buffer) orelse return;
+        const pipeline = self.gctx.lookupResource(self.pipeline) orelse return;
+        const bind_group = self.gctx.lookupResource(self.bind_group) orelse return;
+        const depth_view = self.gctx.lookupResource(self.depth_texture_view) orelse return;
+
+        const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+            .view = back_buffer_view,
+            .load_op = .load,
+            .store_op = .store,
+        }};
+        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+            .view = depth_view,
+            .depth_load_op = .clear,
+            .depth_store_op = .store,
+            .depth_clear_value = 1.0,
+        };
+        const render_pass_info = wgpu.RenderPassDescriptor{
+            .color_attachment_count = color_attachments.len,
+            .color_attachments = &color_attachments,
+            .depth_stencil_attachment = &depth_attachment,
+        };
+        const pass = encoder.beginRenderPass(render_pass_info);
+        defer {
+            pass.end();
+            pass.release();
+        }
+
+        pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bind_group, &.{});
+        pass.draw(glyphs * 6, 1, 0, 0);
+
+        @memset(self.commands, .{ .position = .{ 0, 0 }, .text = "" });
+        self.command_count = 0;
     }
 
     pub fn deinit(self: *Printer) void {
+        self.allocator.free(self.commands);
         self.gctx.releaseResource(self.bind_group);
         self.gctx.releaseResource(self.pipeline);
-        self.gctx.releaseResource(self.vertex_buffer);
-        self.gctx.releaseResource(self.storage_buffer);
         self.gctx.releaseResource(self.depth_texture);
         self.gctx.releaseResource(self.depth_texture_view);
-
-        self.allocator.free(self.storage_array);
     }
 };

@@ -14,15 +14,20 @@ pub const FontAtlas = struct {
     positions: [][]f32,
 };
 
-// Unit??
+// In pixels.
 pub const GlyphRendering = struct {
-    position: [2]f32,
-    size: [2]f32,
+    position: [2]u32,
+    size: [2]u32,
 };
 
 const HARFBUZZ_FACTOR = 64.0;
 
-const GlyphMap = std.AutoHashMap(u8, GlyphRendering);
+const GlyphMap = std.AutoHashMap(u32, GlyphRendering);
+
+const latin = @embedFile("./assets/NotoSans-Regular.ttf");
+const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
+const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
+const emoji = @embedFile("./assets/NotoColorEmoji-Regular.ttf");
 
 /// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method. Initialize it with a font file binary data.
 pub const TextRendering = struct {
@@ -35,19 +40,20 @@ pub const TextRendering = struct {
     atlas_size: u32,
     glyph_map: GlyphMap,
 
-    pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, data: []u8) !TextRendering {
+    pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !TextRendering {
         const ft_lib = try ft.Library.init();
-        const ft_face = try ft_lib.createFaceMemory(data, 0);
+        const ft_face = try ft_lib.createFaceMemory(latin, 0);
+        _ = try ft_lib.createFaceMemory(jp, 0);
+        _ = try ft_lib.createFaceMemory(kr, 0);
         const hb_face = hb.Face.fromFreetypeFace(ft_face);
         const hb_font = hb.Font.init(hb_face);
 
-        const font_size = 20.0;
+        const font_size = 13.0;
         const font_size_frac: i32 = @intFromFloat(font_size * HARFBUZZ_FACTOR);
 
         try ft_face.setPixelSizes(0, @intFromFloat(font_size));
 
         hb_font.setScale(font_size_frac, font_size_frac);
-        hb_font.setPTEM(font_size);
 
         const font_atlas = try generateFontAtlas(allocator, ft_face, gctx);
         return .{
@@ -76,37 +82,34 @@ pub const TextRendering = struct {
 
         const return_positions = try allocator.alloc([2]f32, value.len);
 
-        buffer.addUTF8(value, 0, null);
         buffer.setDirection(hb.Direction.ltr);
         buffer.setScript(hb.Script.latin);
         buffer.setLanguage(hb.Language.fromString("en"));
+        buffer.addUTF8(value, 0, null);
 
         self.hb_font.shape(buffer, null);
 
         const infos = buffer.getGlyphInfos();
         const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
 
-        var cursor_x: f32 = 0;
-        var cursor_y: f32 = 0;
+        var cursor_x: i32 = 0;
         for (positions, infos, 0..) |*pos, info, i| {
             const glyph_index = info.codepoint;
-            try self.ft_face.loadGlyph(glyph_index, .{ .render = false });
+            try self.ft_face.loadGlyph(glyph_index, .{});
             const glyph = self.ft_face.glyph();
-            const metrics = glyph.metrics();
-
-            const offset_x = @as(f32, @floatFromInt(pos.x_offset)) + @as(f32, @floatFromInt(metrics.horiBearingX));
-            const offset_y = @as(f32, @floatFromInt(pos.y_offset)) - @as(f32, @floatFromInt(metrics.horiBearingY));
-            const advance_x = @as(f32, @floatFromInt(pos.x_advance));
-            const advance_y = @as(f32, @floatFromInt(pos.y_advance));
+            const advance_x = pos.x_advance;
 
             return_positions[i] = .{
-                (cursor_x + offset_x) / HARFBUZZ_FACTOR,
-                (cursor_y + offset_y) / HARFBUZZ_FACTOR,
+                @floatFromInt(cursor_x + glyph.bitmapLeft()),
+                -@as(f32, @floatFromInt(glyph.bitmapTop())),
             };
 
-            cursor_x += advance_x;
-            cursor_y += advance_y;
+            std.debug.print("{d} {d}", .{ info.codepoint, info.cluster });
+
+            cursor_x += advance_x >> 6;
         }
+
+        std.debug.print("\n", .{});
 
         return return_positions;
     }
@@ -117,56 +120,79 @@ fn generateFontAtlas(allocator: std.mem.Allocator, ft_face: ft.Face, gctx: *zgpu
     atlas_texture: zgpu.TextureHandle,
     atlas_size: u32,
 } {
-    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{};':\",./<>?\\|`~";
-    const sizes = try allocator.alloc([2]f32, alphabet.len);
+    const ranges = [_][2]u32{
+        [_]u32{ 0x0020, 0x007F }, // Basic Latin
+        [_]u32{ 0x0900, 0x097F }, // Devanagari
+        [_]u32{ 0x0400, 0x04FF }, // Cyrillic
+    };
+
+    var all_characters_len: u64 = 0;
+    for (ranges) |range| {
+        all_characters_len += range[1] - range[0];
+    }
+
+    const sizes = try allocator.alloc([2]u32, all_characters_len);
     defer allocator.free(sizes);
 
-    const MARGIN = 1.0;
+    // Generate a hash map character -> position and size.
+    var map = GlyphMap.init(allocator);
 
-    // Load all alphabet characters.
-    for (0..alphabet.len) |i| {
-        const char = alphabet[i];
-        try ft_face.loadChar(char, .{ .render = true });
-        const bitmap = ft_face.glyph().bitmap();
-        sizes[i] = .{
-            @as(f32, @floatFromInt(bitmap.width())) + MARGIN * 2,
-            @as(f32, @floatFromInt(bitmap.rows())) + MARGIN * 2,
-        };
+    // Iterate over ranges.
+    var i: u32 = 0;
+    for (ranges) |range| {
+        for (range[0]..range[1]) |codepoint| {
+            try ft_face.loadChar(@intCast(codepoint), .{ .render = true });
+            const bitmap = ft_face.glyph().bitmap();
+            sizes[i] = .{
+                bitmap.width(),
+                bitmap.rows(),
+            };
+            i += 1;
+        }
     }
 
     const packing = try pack_atlas.pack(allocator, sizes, 1.1);
     defer allocator.free(packing.positions);
 
-    // Generate a hash map character -> position and size.
-    var map = GlyphMap.init(allocator);
-
-    for (packing.positions, 0..) |position, i| {
-        const char = alphabet[i];
-        try map.put(char, .{ .position = position, .size = sizes[i] });
+    i = 0;
+    for (ranges) |range| {
+        for (range[0]..range[1]) |codepoint| {
+            try map.put(@intCast(codepoint), .{
+                .position = packing.positions[i],
+                .size = sizes[i],
+            });
+            i += 1;
+        }
     }
 
     const bitmap = try allocator.alloc(u8, packing.size * packing.size);
-    @memset(bitmap, 32); // Clear the bitmap to 0.
+    @memset(bitmap, 0); // Clear the bitmap to 0.
     defer allocator.free(bitmap);
 
     // Print all bitmaps.
-    for (0..alphabet.len) |i| {
-        const char = alphabet[i];
-        const position = packing.positions[i];
+    i = 0;
+    for (ranges) |range| {
+        for (range[0]..range[1]) |codepoint| {
+            const position = packing.positions[i];
 
-        try ft_face.loadChar(char, .{ .render = true });
-        const glyph_bitmap = ft_face.glyph().bitmap();
+            try ft_face.loadChar(@intCast(codepoint), .{ .render = true });
+            const glyph_bitmap = ft_face.glyph().bitmap();
 
-        // Go in a loop and copy glyph_bitmap to bitmap in correct position.
-        var y: usize = 0;
-        while (y < glyph_bitmap.rows()) : (y += 1) {
-            var x: usize = 0;
-            while (x < glyph_bitmap.width()) : (x += 1) {
-                const src = y * glyph_bitmap.width() + x;
-                const dst = (@as(u32, @intFromFloat(@round(position[1]))) + y + 1) * packing.size +
-                    @as(u32, @intFromFloat(@round(position[0]))) + x + 1;
-                bitmap[dst] = glyph_bitmap.buffer().?[src];
+            switch (glyph_bitmap.pixelMode()) {
+                .gray => {
+                    // Gray bitmap.
+                    for (0..glyph_bitmap.rows()) |y| {
+                        for (0..glyph_bitmap.width()) |x| {
+                            const index = (position[1] + y) * packing.size + position[0] + x;
+                            const value = glyph_bitmap.buffer().?[y * glyph_bitmap.width() + x];
+                            bitmap[index] = value;
+                        }
+                    }
+                },
+                else => unreachable,
             }
+
+            i += 1;
         }
     }
 

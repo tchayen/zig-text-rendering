@@ -22,3 +22,11 @@ zig build
 ```sh
 zig build run
 ```
+
+## Links
+
+https://mrandri19.github.io/2019/07/24/modern-text-rendering-linux-overview.html
+https://github.com/harfbuzz/harfbuzz-tutorial
+https://github.com/tangrams/harfbuzz-example
+https://github.com/hexops/mach/blob/main/src/gfx/font/native/Font.zig
+https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_wgpu.cpp

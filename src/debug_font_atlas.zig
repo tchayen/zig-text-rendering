@@ -61,10 +61,12 @@ pub const DebugFontAtlas = struct {
             .format = zgpu.GraphicsContext.swapchain_format,
             .blend = &.{
                 .alpha = .{
-                    .src_factor = .src_alpha,
+                    .operation = .add,
+                    .src_factor = .one,
                     .dst_factor = .one_minus_src_alpha,
                 },
                 .color = .{
+                    .operation = .add,
                     .src_factor = .src_alpha,
                     .dst_factor = .one_minus_src_alpha,
                 },
