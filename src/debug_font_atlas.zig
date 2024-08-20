@@ -110,9 +110,9 @@ pub const DebugFontAtlas = struct {
         const pipeline = gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
 
         const sampler = gctx.createSampler(.{
-            .mag_filter = .nearest,
-            .min_filter = .nearest,
-            .mipmap_filter = .nearest,
+            .mag_filter = .linear,
+            .min_filter = .linear,
+            .mipmap_filter = .linear,
             .max_anisotropy = 1,
         });
 

@@ -30,3 +30,4 @@ https://github.com/harfbuzz/harfbuzz-tutorial
 https://github.com/tangrams/harfbuzz-example
 https://github.com/hexops/mach/blob/main/src/gfx/font/native/Font.zig
 https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_wgpu.cpp
+https://tex.stackexchange.com/questions/520034/fallback-for-harfbuzz-fonts
