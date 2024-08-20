@@ -5,11 +5,11 @@ const expectEqual = std.testing.expectEqual;
 // Implementation of // https://blackpawn.com/texts/lightmaps/default.html.
 
 const Rectangle = struct {
-    id: u32,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+    id: i32,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 };
 
 const Node = struct {
@@ -20,7 +20,7 @@ const Node = struct {
 
 pub const Packing = struct {
     size: u32,
-    positions: [][2]u32,
+    positions: [][2]i32,
 };
 
 /// Packs rectangles into a square texture atlas. Due to how the algorithm
@@ -29,8 +29,8 @@ pub const Packing = struct {
 ///
 /// If the `area_factor` is too small the program will crash - this should be
 /// fixed.
-pub fn pack(allocator: std.mem.Allocator, sizes: [][2]u32, area_factor: f32) !Packing {
-    const positions = try allocator.alloc([2]u32, sizes.len);
+pub fn pack(allocator: std.mem.Allocator, sizes: [][2]i32, area_factor: f32) !Packing {
+    const positions = try allocator.alloc([2]i32, sizes.len);
 
     var area: f32 = 0;
     for (sizes) |size| {
@@ -47,14 +47,14 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]u32, area_factor: f32) !Pa
     }
     std.mem.sort(Rectangle, rectangles, {}, sortBySizeFn);
 
-    const approximateSize: u32 = @intFromFloat(@ceil(@sqrt(area) * area_factor));
+    const approximateSize: i32 = @intFromFloat(@ceil(@sqrt(area) * area_factor));
 
     const root = try arena_allocator.create(Node);
     root.* = .{
         .left = null,
         .right = null,
         .rectangle = .{
-            .id = std.math.maxInt(u32),
+            .id = std.math.maxInt(i32),
             .x = 0,
             .y = 0,
             .width = approximateSize,
@@ -75,13 +75,13 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]u32, area_factor: f32) !Pa
     queueSize += 1;
 
     // Breadth-first search traverse the graph and find actual width and height.
-    var realWidth: u32 = 0;
-    var realHeight: u32 = 0;
+    var realWidth: i32 = 0;
+    var realHeight: i32 = 0;
     while (queueSize > 0) {
         queueSize -= 1;
         const node = queue[queueSize];
-        if (node.rectangle.id != std.math.maxInt(u32)) {
-            positions[node.rectangle.id] = .{ node.rectangle.x, node.rectangle.y };
+        if (node.rectangle.id != std.math.maxInt(i32)) {
+            positions[@intCast(node.rectangle.id)] = .{ node.rectangle.x, node.rectangle.y };
             realWidth = @max(realWidth, node.rectangle.x + node.rectangle.width);
             realHeight = @max(realHeight, node.rectangle.y + node.rectangle.height);
         } else {
@@ -97,7 +97,7 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]u32, area_factor: f32) !Pa
     }
 
     return Packing{
-        .size = ceilPowerOfTwo(@max(realWidth, realHeight)),
+        .size = ceilPowerOfTwo(@as(u32, @intCast(@max(realWidth, realHeight)))),
         .positions = positions,
     };
 }
@@ -130,7 +130,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
         return try insert(allocator, node.right.?, rectangle);
     } else {
         // If there is already a rectangle here, return.
-        if (node.rectangle.id != std.math.maxInt(u32)) {
+        if (node.rectangle.id != std.math.maxInt(i32)) {
             return null;
         }
 
@@ -156,7 +156,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
 
         if (dw > dh) {
             node.left.?.rectangle = .{
-                .id = std.math.maxInt(u32),
+                .id = std.math.maxInt(i32),
                 .x = node.rectangle.x,
                 .y = node.rectangle.y,
                 .width = rectangle.width,
@@ -164,7 +164,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
             };
 
             node.right.?.rectangle = .{
-                .id = std.math.maxInt(u32),
+                .id = std.math.maxInt(i32),
                 .x = node.rectangle.x + rectangle.width,
                 .y = node.rectangle.y,
                 .width = dw,
@@ -172,7 +172,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
             };
         } else {
             node.left.?.rectangle = .{
-                .id = std.math.maxInt(u32),
+                .id = std.math.maxInt(i32),
                 .x = node.rectangle.x,
                 .y = node.rectangle.y,
                 .width = node.rectangle.width,
@@ -180,7 +180,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
             };
 
             node.right.?.rectangle = .{
-                .id = std.math.maxInt(u32),
+                .id = std.math.maxInt(i32),
                 .x = node.rectangle.x,
                 .y = node.rectangle.y + rectangle.height,
                 .width = node.rectangle.width,
@@ -195,7 +195,7 @@ fn insert(allocator: std.mem.Allocator, node: *Node, rectangle: Rectangle) !?*No
 
 test "packing" {
     const allocator = std.testing.allocator;
-    const sizes = [_][2]u32{
+    const sizes = [_][2]i32{
         .{ 1, 1 },
         .{ 2, 2 },
         .{ 1, 1 },

@@ -65,12 +65,12 @@ pub fn main() !void {
     var debug_font_atlas = DebugFontAtlas.init(gctx, text_rendering.atlas_texture);
     defer debug_font_atlas.deinit();
 
-    // try printer.text("This text is now tiny, readable and does not really resemble the original font (hinting!)", 200, 200);
-    try printer.text("Test", 200, 200);
-    try printer.text("नमस्ते", 200, 225);
-    try printer.text("\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947}", 200, 225);
-    try printer.text("привіт", 200, 250);
-    // try printer.text("This text", 200, 275);
+    // try printer.text("Test", 200, 175);
+    try printer.text("hello how are you doing?", 200, 200);
+    try printer.text("नमस्ते, आप कैसे हैं", 200, 225);
+    // try printer.text("\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947}", 200, 225);
+    try printer.text("cześć jak się masz?", 200, 250);
+    try printer.text("привіт, як справи?", 200, 275);
     try draw(gctx, &triangle, &debug_font_atlas, &printer);
 
     while (!window.shouldClose() and window.getKey(.escape) != .press) {

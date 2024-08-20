@@ -34,7 +34,7 @@ const wgsl_fs =
     \\
     \\ @fragment fn main(in: VertexOut) -> @location(0) vec4f {
     \\     let a = textureSample(t, s, in.uv).r;
-    \\     return vec4f(vec3f(1), a) + vec4f(vec3f(1), 0.4);
+    \\     return vec4f(vec3f(1), a);
     \\ }
 ;
 
@@ -192,20 +192,19 @@ pub const Printer = struct {
         var i: u32 = 0;
         for (0..self.command_count) |c| {
             const value = self.commands[c];
-            const positions = try self.text_rendering.shape(self.allocator, value.text);
-            defer self.allocator.free(positions);
+            const glyph_infos = try self.text_rendering.shape(self.allocator, value.text);
+            defer self.allocator.free(glyph_infos);
 
-            for (value.text, positions) |char, position| {
-                const v = self.text_rendering.glyph_map.get(char) orelse continue;
+            for (glyph_infos) |info| {
                 const atlas_size: f32 = @floatFromInt(self.text_rendering.atlas_size);
 
-                const p_x: f32 = @floatFromInt(v.position[0]);
-                const p_y: f32 = @floatFromInt(v.position[1]);
-                const s_x: f32 = @floatFromInt(v.size[0]);
-                const s_y: f32 = @floatFromInt(v.size[1]);
+                const p_x: f32 = @floatFromInt(info.atlas_x);
+                const p_y: f32 = @floatFromInt(info.atlas_y);
+                const s_x: f32 = @floatFromInt(info.width);
+                const s_y: f32 = @floatFromInt(info.height);
 
-                const x = (value.position[0] + position[0]) / 1600 * 2 - 1;
-                const y = -((value.position[1] + position[1]) / 1000 * 2 - 1);
+                const x = (value.position[0] + @as(f32, @floatFromInt(info.x))) / 1600 * 2 - 1;
+                const y = -((value.position[1] + @as(f32, @floatFromInt(info.y))) / 1000 * 2 - 1);
                 const w: f32 = s_x / 1600 * 2;
                 const h: f32 = s_y / 1000 * 2;
 
