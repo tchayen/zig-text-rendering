@@ -3,6 +3,7 @@ const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 const zm = @import("zmath");
 const TextRendering = @import("font.zig").TextRendering;
+const PIXELS = @import("font.zig").PIXELS;
 const utils = @import("utils.zig");
 
 const wgsl_vs =
@@ -127,7 +128,6 @@ pub const Printer = struct {
             },
         };
         const pipeline = gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
-
         const sampler = gctx.createSampler(.{
             .mag_filter = .linear,
             .min_filter = .linear,
@@ -137,7 +137,6 @@ pub const Printer = struct {
             .address_mode_w = .clamp_to_edge,
             .max_anisotropy = 1,
         });
-
         const atlas_texture_view = gctx.createTextureView(text_rendering.atlas_texture, .{});
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &.{
@@ -189,6 +188,8 @@ pub const Printer = struct {
         const vertex_data = try self.allocator.alloc(f32, glyphs * 2 * 12);
         defer self.allocator.free(vertex_data);
 
+        const atlas_size: f32 = @floatFromInt(self.text_rendering.atlas_size);
+
         var i: u32 = 0;
         for (0..self.command_count) |c| {
             const value = self.commands[c];
@@ -196,17 +197,15 @@ pub const Printer = struct {
             defer self.allocator.free(glyph_infos);
 
             for (glyph_infos) |info| {
-                const atlas_size: f32 = @floatFromInt(self.text_rendering.atlas_size);
-
-                const p_x: f32 = @floatFromInt(info.atlas_x);
-                const p_y: f32 = @floatFromInt(info.atlas_y);
-                const s_x: f32 = @floatFromInt(info.width);
-                const s_y: f32 = @floatFromInt(info.height);
+                const p_x: f32 = @floatFromInt(info.glyph.x);
+                const p_y: f32 = @floatFromInt(info.glyph.y);
+                const s_x: f32 = @floatFromInt(info.glyph.width);
+                const s_y: f32 = @floatFromInt(info.glyph.height);
 
                 const x = (value.position[0] + @as(f32, @floatFromInt(info.x))) / 1600 * 2 - 1;
                 const y = -((value.position[1] + @as(f32, @floatFromInt(info.y))) / 1000 * 2 - 1);
-                const w: f32 = s_x / 1600 * 2;
-                const h: f32 = s_y / 1000 * 2;
+                const w: f32 = s_x / 1600 * 2 / PIXELS;
+                const h: f32 = s_y / 1000 * 2 / PIXELS;
 
                 // 0
                 vertex_data[i + 0] = x;

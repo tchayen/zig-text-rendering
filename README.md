@@ -23,6 +23,14 @@ zig build
 zig build run
 ```
 
+## TODO
+
+- [ ] Margins between characters in the atlas (to fix bleeding)
+- [ ] Different text sizes in the atlas
+- [ ] Retina support
+- [ ] ICU4X for line breaking [link](https://codeberg.org/linusg/icu4zig)
+- [ ] Emojis (either SVG or bitmap)
+
 ## Links
 
 https://mrandri19.github.io/2019/07/24/modern-text-rendering-linux-overview.html

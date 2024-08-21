@@ -5,24 +5,19 @@ const ft = @import("mach-freetype");
 const hb = @import("mach-harfbuzz");
 const pack_atlas = @import("pack_atlas.zig");
 
-pub const Bitmap = struct {
-    width: u32,
-    height: u32,
-};
-
-pub const FontAtlas = struct {
-    bitmap: Bitmap,
-    positions: [][]f32,
-};
-
 pub const GlyphShape = struct {
-    char_index: u32,
     x: i32,
     y: i32,
-    atlas_x: i32,
-    atlas_y: i32,
+    glyph: GlyphInfo,
+};
+
+pub const GlyphInfo = struct {
+    x: i32,
+    y: i32,
     width: i32,
     height: i32,
+    bitmap_left: i32,
+    bitmap_top: i32,
 };
 
 pub const Font = struct {
@@ -31,19 +26,23 @@ pub const Font = struct {
     hb_font: hb.Font,
 };
 
-const GlyphMap = std.AutoHashMap(u32, GlyphShape);
+const GlyphMap = std.AutoHashMap(u32, GlyphInfo);
+
+pub const PIXELS = 1;
+const font_size = 13;
+const MARGIN_PX = 1;
 
 const latin = @embedFile("./assets/NotoSans-Regular.ttf");
-// const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
 const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
 const emoji = @embedFile("./assets/NotoColorEmoji-Regular.ttf");
+const emoji_svg = @embedFile("./assets/NotoColorEmoji-SVG.otf");
 
-/// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method. Initialize it with a font file binary data.
+/// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method.
 pub const TextRendering = struct {
     allocator: Allocator,
     gctx: *zgpu.GraphicsContext,
     ft_lib: ft.Library,
-    fonts: [3]Font,
+    fonts: [4]Font,
     atlas_texture: zgpu.TextureHandle,
     atlas_size: u32,
     glyph_map: GlyphMap,
@@ -51,9 +50,7 @@ pub const TextRendering = struct {
     pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext) !TextRendering {
         const ft_lib = try ft.Library.init();
 
-        const font_size = 13;
-
-        var fonts: [3]Font = undefined;
+        var fonts: [4]Font = undefined;
         fonts[0].ft_face = try ft_lib.createFaceMemory(latin, 0);
         fonts[0].hb_face = hb.Face.fromFreetypeFace(fonts[0].ft_face);
         fonts[0].hb_font = hb.Font.init(fonts[0].hb_face);
@@ -66,12 +63,20 @@ pub const TextRendering = struct {
         fonts[2].hb_face = hb.Face.fromFreetypeFace(fonts[2].ft_face);
         fonts[2].hb_font = hb.Font.init(fonts[2].hb_face);
 
+        fonts[3].ft_face = try ft_lib.createFaceMemory(emoji_svg, 0);
+        fonts[3].hb_face = hb.Face.fromFreetypeFace(fonts[3].ft_face);
+        fonts[3].hb_font = hb.Font.init(fonts[3].hb_face);
+
         for (fonts) |font| {
-            try font.ft_face.setPixelSizes(0, font_size);
+            try font.ft_face.setPixelSizes(0, font_size * PIXELS);
             font.hb_font.setScale(font_size * 64, font_size * 64);
         }
 
         const font_atlas = try generateFontAtlas(allocator, fonts, gctx);
+
+        for (fonts) |font| {
+            try font.ft_face.setPixelSizes(0, font_size);
+        }
 
         return .{
             .allocator = allocator,
@@ -115,29 +120,16 @@ pub const TextRendering = struct {
         const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
 
         const shapes = try allocator.alloc(GlyphShape, infos.len);
-
         var cursor_x: i32 = 0;
         for (positions, infos, 0..) |pos, info, i| {
-            try self.fonts[0].ft_face.loadGlyph(info.codepoint, .{});
-            const ft_glyph = self.fonts[0].ft_face.glyph();
             const glyph = self.glyph_map.get(info.codepoint) orelse continue;
-
-            const x = cursor_x + ft_glyph.bitmapLeft();
-            const y = -ft_glyph.bitmapTop();
-
             shapes[i] = .{
-                .char_index = info.codepoint,
-                .x = x,
-                .y = y,
-                .atlas_x = glyph.atlas_x,
-                .atlas_y = glyph.atlas_y,
-                .width = glyph.width,
-                .height = glyph.height,
+                .x = cursor_x + @divFloor(glyph.bitmap_left, PIXELS),
+                .y = -@divFloor(glyph.bitmap_top, PIXELS),
+                .glyph = glyph,
             };
-
             cursor_x += pos.x_advance >> 6;
         }
-
         return shapes;
     }
 };
@@ -163,7 +155,7 @@ fn codepointToFont(codepoint: u64) ?usize {
     };
 }
 
-fn generateFontAtlas(allocator: Allocator, fonts: [3]Font, gctx: *zgpu.GraphicsContext) !struct {
+fn generateFontAtlas(allocator: Allocator, fonts: [4]Font, gctx: *zgpu.GraphicsContext) !struct {
     glyph_map: GlyphMap,
     atlas_texture: zgpu.TextureHandle,
     atlas_size: u32,
@@ -174,10 +166,9 @@ fn generateFontAtlas(allocator: Allocator, fonts: [3]Font, gctx: *zgpu.GraphicsC
         [_]u32{ 0x0100, 0x017F }, // Latin Extended-A
         [_]u32{ 0x0180, 0x024F }, // Latin Extended-B
         // Bug: cyrillic will be incorrectly displayed unless hangul jamo range is declared first.
-        [_]u32{ 0x1100, 0x11FF }, // Hangul Jamo
+        // [_]u32{ 0x1100, 0x11FF }, // Hangul Jamo
         [_]u32{ 0x0400, 0x04FF }, // Cyrillic
-        [_]u32{ 0x0900, 0x097F }, // Devanagari
-        [_]u32{ 0x1F600, 0x1F64F }, // Emoticons
+        // [_]u32{ 0x0900, 0x097F }, // Devanagari
     };
 
     var all_characters_len: u64 = 0;
@@ -199,8 +190,8 @@ fn generateFontAtlas(allocator: Allocator, fonts: [3]Font, gctx: *zgpu.GraphicsC
             try fonts[fontId].ft_face.loadChar(@intCast(codepoint), .{ .render = true });
             const bitmap = fonts[fontId].ft_face.glyph().bitmap();
             sizes[i] = .{
-                @intCast(bitmap.width()),
-                @intCast(bitmap.rows()),
+                @intCast(bitmap.width() + MARGIN_PX * 2),
+                @intCast(bitmap.rows() + MARGIN_PX * 2),
             };
             i += 1;
         }
@@ -214,14 +205,16 @@ fn generateFontAtlas(allocator: Allocator, fonts: [3]Font, gctx: *zgpu.GraphicsC
         for (range[0]..range[1]) |codepoint| {
             const fontId = codepointToFont(codepoint) orelse return error.MissingRange;
             const char_index = fonts[fontId].ft_face.getCharIndex(@intCast(codepoint)) orelse return error.InvalidCodepoint;
+            try fonts[fontId].ft_face.loadGlyph(char_index, .{});
+            const ft_glyph = fonts[fontId].ft_face.glyph();
+
             try map.put(@intCast(char_index), .{
-                .char_index = @intCast(char_index),
-                .x = 0,
-                .y = 0,
-                .atlas_x = packing.positions[i][0],
-                .atlas_y = packing.positions[i][1],
+                .x = packing.positions[i][0],
+                .y = packing.positions[i][1],
                 .width = sizes[i][0],
                 .height = sizes[i][1],
+                .bitmap_left = ft_glyph.bitmapLeft() - MARGIN_PX,
+                .bitmap_top = ft_glyph.bitmapTop() - MARGIN_PX,
             });
             i += 1;
         }
@@ -236,6 +229,8 @@ fn generateFontAtlas(allocator: Allocator, fonts: [3]Font, gctx: *zgpu.GraphicsC
     for (ranges) |range| {
         for (range[0]..range[1]) |codepoint| {
             const position = packing.positions[i];
+            const packing_x: usize = @intCast(position[0]);
+            const packing_y: usize = @intCast(position[1]);
 
             const fontId = codepointToFont(codepoint) orelse return error.MissingRange;
             try fonts[fontId].ft_face.loadChar(@intCast(codepoint), .{ .render = true });
@@ -246,7 +241,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: [3]Font, gctx: *zgpu.GraphicsC
                     // Gray bitmap.
                     for (0..glyph_bitmap.rows()) |y| {
                         for (0..glyph_bitmap.width()) |x| {
-                            const index = (@as(u32, @intCast(position[1])) + y) * packing.size + @as(u32, @intCast(position[0])) + x;
+                            const index = (packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX;
                             const value = glyph_bitmap.buffer().?[y * glyph_bitmap.width() + x];
                             bitmap[index] = value;
                         }

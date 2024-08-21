@@ -2,7 +2,7 @@ const std = @import("std");
 const math = std.math;
 const expectEqual = std.testing.expectEqual;
 
-// Implementation of // https://blackpawn.com/texts/lightmaps/default.html.
+// Implementation of https://blackpawn.com/texts/lightmaps/default.html.
 
 const Rectangle = struct {
     id: i32,
