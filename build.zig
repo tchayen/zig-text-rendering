@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_icu4zig = @import("icu4zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -34,6 +35,16 @@ pub fn build(b: *std.Build) void {
     const mach_freetype = b.dependency("mach_freetype", .{ .target = target, .optimize = optimize });
     exe.root_module.addImport("mach-freetype", mach_freetype.module("mach-freetype"));
     exe.root_module.addImport("mach-harfbuzz", mach_freetype.module("mach-harfbuzz"));
+
+    // icu4zig
+    const icu4zig = b.dependency("icu4zig", .{ .target = target, .optimize = optimize });
+    exe.root_module.addImport("icu4zig", icu4zig.module("icu4zig"));
+
+    const icu4x = icu4zig.builder.dependency("icu4x", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    build_icu4zig.link(exe, icu4x);
 
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);

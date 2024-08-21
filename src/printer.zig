@@ -193,7 +193,11 @@ pub const Printer = struct {
         var i: u32 = 0;
         for (0..self.command_count) |c| {
             const value = self.commands[c];
-            const glyph_infos = try self.text_rendering.shape(self.allocator, value.text);
+            const glyph_infos = try self.text_rendering.shape(
+                self.allocator,
+                value.text,
+                300, //std.math.maxInt(i32),
+            );
             defer self.allocator.free(glyph_infos);
 
             for (glyph_infos) |info| {

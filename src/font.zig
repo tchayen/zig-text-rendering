@@ -4,6 +4,7 @@ const zgpu = @import("zgpu");
 const ft = @import("mach-freetype");
 const hb = @import("mach-harfbuzz");
 const pack_atlas = @import("pack_atlas.zig");
+const icu4x = @import("icu4zig");
 
 /// Device pixel ration.
 pub const PIXELS = 1;
@@ -12,6 +13,13 @@ pub const PIXELS = 1;
 const MARGIN_PX = 1;
 
 const font_size = 15;
+
+const FontMapping = enum(usize) {
+    Latin = 0,
+    Korean = 1,
+    Japanese = 2,
+    Arabic = 3,
+};
 
 const Range = struct {
     font: usize,
@@ -130,12 +138,16 @@ pub const TextRendering = struct {
         self.glyph_map.deinit();
     }
 
-    pub fn shape(self: *TextRendering, allocator: Allocator, value: []const u8) ![]GlyphShape {
+    pub fn shape(self: *TextRendering, allocator: Allocator, value: []const u8, max_width: i32) ![]GlyphShape {
         const ranges = try getRanges(allocator, value);
         defer allocator.free(ranges);
 
         var shapes = std.ArrayList(GlyphShape).init(allocator);
         var cursor_x: i32 = 0;
+        var cursor_y: i32 = 0;
+
+        // const segments = segment(allocator, value);
+        // defer allocator.free(segments);
 
         for (ranges) |range| {
             var buffer = hb.Buffer.init() orelse return error.OutOfMemory;
@@ -153,24 +165,24 @@ pub const TextRendering = struct {
 
             for (positions, infos) |pos, info| {
                 const glyph = self.glyph_map.get(info.codepoint) orelse continue;
+
+                if (cursor_x + (pos.x_advance >> 6) > max_width) {
+                    cursor_x = 0;
+                    cursor_y += font_size + 6;
+                }
+
                 try shapes.append(.{
                     .x = cursor_x + @divFloor(glyph.bitmap_left, PIXELS),
-                    .y = -@divFloor(glyph.bitmap_top, PIXELS),
+                    .y = cursor_y - @divFloor(glyph.bitmap_top, PIXELS),
                     .glyph = glyph,
                 });
                 cursor_x += pos.x_advance >> 6;
+                cursor_y += pos.y_advance >> 6;
             }
         }
 
         return shapes.toOwnedSlice();
     }
-};
-
-const FontMapping = enum(usize) {
-    Latin = 0,
-    Korean = 1,
-    Japanese = 2,
-    Arabic = 3,
 };
 
 fn codepointToFont(codepoint: u64) ?usize {
@@ -196,11 +208,7 @@ fn codepointToFont(codepoint: u64) ?usize {
 }
 
 /// Generate font atlas texture from the input fonts.
-fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct {
-    glyph_map: GlyphMap,
-    size: u32,
-    bitmap: []u8,
-} {
+fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyph_map: GlyphMap, size: u32, bitmap: []u8 } {
     const ranges = [_][2]u32{
         [_]u32{ 0x0020, 0x007F }, // Basic Latin
         [_]u32{ 0x00A0, 0x00FF }, // Latin-1 Supplement
@@ -352,4 +360,22 @@ fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
     }
 
     return ranges.toOwnedSlice();
+}
+
+/// WIP segment text into words using ICU4X.
+pub fn segment(allocator: Allocator, value: []const u8) ![]u32 {
+    const data_provider = icu4x.DataProvider.init();
+    defer data_provider.deinit();
+
+    const segmenter = icu4x.WordSegmenter.init(data_provider);
+    defer segmenter.deinit();
+
+    var iterator = segmenter.segment(.{ .utf8 = value });
+    defer iterator.deinit();
+
+    var segments = std.ArrayList(u32).init(allocator);
+    while (iterator.next()) |s| {
+        try segments.append(@intCast(s));
+    }
+    return segments.toOwnedSlice();
 }
