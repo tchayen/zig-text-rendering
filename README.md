@@ -25,8 +25,10 @@ zig build run
 
 ## TODO
 
-- [ ] Margins between characters in the atlas (to fix bleeding)
+- [x] Margins between characters in the atlas (to fix bleeding)
 - [ ] Different text sizes in the atlas
+- [x] Splitting shaping into ranges handled by different fonts
+- [ ] Debug why arabic breaks font atlas.
 - [ ] Retina support
 - [ ] ICU4X for line breaking [link](https://codeberg.org/linusg/icu4zig)
 - [ ] Emojis (either SVG or bitmap)
