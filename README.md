@@ -32,17 +32,19 @@ zig build run
 - [x] Unless Devanagari script is selected in HarfBuzz, it will use wrong ligatures. Figure out how to select script automatically.
 - [x] Ranges seem to have off-by-one errors – missing last character in each one.
 - [x] Debug why arabic breaks font atlas (it was overlapping indexes between font faces).
+- [x] Retina support.
+- [ ] Fix icu4zig compilation on Windows.
 - [ ] Detect if given unicode character is already present in the atlas and skip it. This is a solution for all font faces including latin alphabet.
 - [ ] Proper line breaking.
 - [ ] Different text sizes in the atlas.
-- [ ] Retina support.
 - [ ] Emojis (either SVG or bitmap).
+- [ ] Consider replacing atlas packing algorithm with skyline bottom-left.
 
 ## Links
 
-https://mrandri19.github.io/2019/07/24/modern-text-rendering-linux-overview.html
-https://github.com/harfbuzz/harfbuzz-tutorial
-https://github.com/tangrams/harfbuzz-example
-https://github.com/hexops/mach/blob/main/src/gfx/font/native/Font.zig
-https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_wgpu.cpp
-https://tex.stackexchange.com/questions/520034/fallback-for-harfbuzz-fonts
+- https://mrandri19.github.io/2019/07/24/modern-text-rendering-linux-overview.html
+- https://github.com/harfbuzz/harfbuzz-tutorial
+- https://github.com/tangrams/harfbuzz-example
+- https://github.com/hexops/mach/blob/main/src/gfx/font/native/Font.zig
+- https://github.com/ocornut/imgui/blob/master/backends/imgui_impl_wgpu.cpp
+- https://tex.stackexchange.com/questions/520034/fallback-for-harfbuzz-fonts

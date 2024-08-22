@@ -6,9 +6,6 @@ const hb = @import("mach-harfbuzz");
 const pack_atlas = @import("pack_atlas.zig");
 const icu4x = @import("icu4zig");
 
-/// Device pixel ration.
-pub const PIXELS = 1;
-
 /// Margin around each glyph in the atlas.
 const MARGIN_PX = 1;
 
@@ -16,8 +13,9 @@ const font_size = 18;
 
 const FontMapping = enum(usize) {
     Latin = 0,
-    Japanese = 1,
-    Arabic = 2,
+    Arabic = 1,
+    Japanese = 2,
+    Korean = 3,
 };
 
 const RGBA = struct { r: u8, g: u8, b: u8, a: u8 };
@@ -55,7 +53,7 @@ pub const Font = struct {
 };
 
 const latin = @embedFile("./assets/NotoSans-Regular.ttf");
-const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
+// const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
 // const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
 const ar = @embedFile("./assets/NotoSansArabic-Regular.ttf");
 // const emoji = @embedFile("./assets/NotoColorEmoji-Regular.ttf");
@@ -64,31 +62,35 @@ const ar = @embedFile("./assets/NotoSansArabic-Regular.ttf");
 /// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method.
 pub const FontLibrary = struct {
     allocator: Allocator,
+
     gctx: *zgpu.GraphicsContext,
+
     ft_lib: ft.Library,
     fonts: []Font,
     atlas_texture: zgpu.TextureHandle,
     atlas_size: u32,
+    dpr: u32,
 
-    pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext) !FontLibrary {
+    pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext, dpr: u32) !FontLibrary {
         const ft_lib = try ft.Library.init();
 
-        var fonts = try allocator.alloc(Font, 3);
+        var fonts = try allocator.alloc(Font, 2);
         fonts[0].ft_face = try ft_lib.createFaceMemory(latin, 0);
         fonts[0].hb_face = hb.Face.fromFreetypeFace(fonts[0].ft_face);
         fonts[0].hb_font = hb.Font.init(fonts[0].hb_face);
 
-        fonts[1].ft_face = try ft_lib.createFaceMemory(jp, 0);
+        fonts[1].ft_face = try ft_lib.createFaceMemory(ar, 0);
         fonts[1].hb_face = hb.Face.fromFreetypeFace(fonts[1].ft_face);
         fonts[1].hb_font = hb.Font.init(fonts[1].hb_face);
 
-        fonts[2].ft_face = try ft_lib.createFaceMemory(ar, 0);
-        fonts[2].hb_face = hb.Face.fromFreetypeFace(fonts[2].ft_face);
-        fonts[2].hb_font = hb.Font.init(fonts[2].hb_face);
+        // fonts[2].ft_face = try ft_lib.createFaceMemory(jp, 0);
+        // fonts[2].hb_face = hb.Face.fromFreetypeFace(fonts[2].ft_face);
+        // fonts[2].hb_font = hb.Font.init(fonts[2].hb_face);
 
         for (fonts) |*font| {
-            try font.ft_face.setPixelSizes(0, font_size * PIXELS);
-            font.hb_font.setScale(font_size * 64, font_size * 64);
+            try font.ft_face.setPixelSizes(0, font_size * dpr);
+            const hb_font_size: i32 = font_size * @as(i32, @intCast(dpr)) * 64;
+            font.hb_font.setScale(hb_font_size, hb_font_size);
             font.glyphs = GlyphMap.init(allocator);
         }
 
@@ -113,10 +115,6 @@ pub const FontLibrary = struct {
             font_atlas.bitmap,
         );
 
-        for (fonts) |font| {
-            try font.ft_face.setPixelSizes(0, font_size);
-        }
-
         return FontLibrary{
             .allocator = allocator,
             .gctx = gctx,
@@ -124,6 +122,7 @@ pub const FontLibrary = struct {
             .fonts = fonts,
             .atlas_texture = atlas_texture,
             .atlas_size = font_atlas.size,
+            .dpr = dpr,
         };
     }
 
@@ -150,11 +149,6 @@ pub const FontLibrary = struct {
         const segments = try segment(allocator, value);
         defer allocator.free(segments);
 
-        for (segments) |s| {
-            std.debug.print("{d} ", .{s});
-        }
-        std.debug.print("\n", .{});
-
         for (ranges) |range| {
             var buffer = hb.Buffer.init() orelse return error.OutOfMemory;
             defer buffer.deinit();
@@ -177,7 +171,7 @@ pub const FontLibrary = struct {
             const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
 
             for (positions, infos) |pos, info| {
-                // After shaping it is a glyph index not unicode point.
+                // After shaping info.codepoint is a glyph index not unicode point.
                 const glyph = self.fonts[fontId].glyphs.get(info.codepoint) orelse {
                     std.debug.print("No glyph for {d}\n", .{info.codepoint});
                     continue;
@@ -190,12 +184,8 @@ pub const FontLibrary = struct {
                 });
                 cursor_x += pos.x_advance >> 6;
                 cursor_y += pos.y_advance >> 6;
-
-                std.debug.print("{d} {d}, ", .{ info.codepoint, info.cluster });
             }
         }
-        std.debug.print("\n", .{});
-
         return shapes.toOwnedSlice();
     }
 };
@@ -218,9 +208,9 @@ fn scriptToFont(script: hb.Script) ?usize {
     return switch (script) {
         hb.Script.latin => @intFromEnum(FontMapping.Latin),
         hb.Script.devanagari => @intFromEnum(FontMapping.Latin),
-        hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
-        hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
         hb.Script.arabic => @intFromEnum(FontMapping.Arabic),
+        // hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
+        // hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
         else => null,
     };
 }

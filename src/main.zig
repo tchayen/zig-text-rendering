@@ -4,6 +4,7 @@ const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 const zm = @import("zmath");
+const assert = std.debug.assert;
 
 const utils = @import("utils.zig");
 const font = @import("font.zig");
@@ -36,6 +37,11 @@ pub fn main() !void {
     defer window.destroy();
     window.setSizeLimits(400, 400, -1, -1);
 
+    const content_scale_xy = window.getContentScale();
+    std.debug.print("Pixel scale: (x: {d}, y: {d})\n", .{ content_scale_xy[0], content_scale_xy[1] });
+    assert(content_scale_xy[0] == content_scale_xy[1]); // Require square pixels.
+    const dpr: u32 = @intFromFloat(@round(content_scale_xy[0])); // Round to full pixels.
+
     const gctx = try zgpu.GraphicsContext.create(
         allocator,
         .{
@@ -56,10 +62,10 @@ pub fn main() !void {
     var triangle = Triangle.init(gctx);
     defer triangle.deinit();
 
-    var font_library = try font.FontLibrary.init(allocator, gctx);
+    var font_library = try font.FontLibrary.init(allocator, gctx, dpr);
     defer font_library.deinit();
 
-    var printer = try Printer.init(allocator, gctx, &font_library);
+    var printer = try Printer.init(allocator, gctx, &font_library, dpr);
     defer printer.deinit();
 
     var debug_font_atlas = DebugFontAtlas.init(gctx, font_library.atlas_texture);

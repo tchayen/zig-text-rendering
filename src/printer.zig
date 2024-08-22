@@ -1,9 +1,9 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 const zm = @import("zmath");
 const FontLibrary = @import("font.zig").FontLibrary;
-const PIXELS = @import("font.zig").PIXELS;
 const utils = @import("utils.zig");
 
 const wgsl_vs =
@@ -46,10 +46,11 @@ const Command = struct {
 
 /// Printer prints text on the screen.
 pub const Printer = struct {
-    gctx: *zgpu.GraphicsContext,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
+
     font_library: *FontLibrary,
 
+    gctx: *zgpu.GraphicsContext,
     pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
     depth_texture: zgpu.TextureHandle,
@@ -58,11 +59,9 @@ pub const Printer = struct {
     command_count: u32,
     commands: []Command,
 
-    pub fn init(
-        allocator: std.mem.Allocator,
-        gctx: *zgpu.GraphicsContext,
-        font_library: *FontLibrary,
-    ) !Printer {
+    dpr: u32,
+
+    pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext, font_library: *FontLibrary, dpr: u32) !Printer {
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
             zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
@@ -161,6 +160,8 @@ pub const Printer = struct {
 
             .command_count = 0,
             .commands = commands,
+
+            .dpr = dpr,
         };
     }
 
@@ -175,6 +176,8 @@ pub const Printer = struct {
         encoder: zgpu.wgpu.CommandEncoder,
     ) !void {
         const atlas_size: f32 = @floatFromInt(self.font_library.atlas_size);
+        const screen_width: f32 = @floatFromInt(self.gctx.swapchain_descriptor.width);
+        const screen_height: f32 = @floatFromInt(self.gctx.swapchain_descriptor.height);
 
         var glyph_count: u32 = 0;
         for (0..self.command_count) |i| {
@@ -207,10 +210,10 @@ pub const Printer = struct {
                 const s_x: f32 = @floatFromInt(info.glyph.width);
                 const s_y: f32 = @floatFromInt(info.glyph.height);
 
-                const x = (value.position[0] + @as(f32, @floatFromInt(info.x))) / 1600 * 2 - 1;
-                const y = -((value.position[1] + @as(f32, @floatFromInt(info.y))) / 1000 * 2 - 1);
-                const w: f32 = s_x / 1600 * 2 / PIXELS;
-                const h: f32 = s_y / 1000 * 2 / PIXELS;
+                const x = (value.position[0] + @as(f32, @floatFromInt(info.x))) / screen_width * 2 - 1;
+                const y = -((value.position[1] + @as(f32, @floatFromInt(info.y))) / screen_height * 2 - 1);
+                const w: f32 = s_x / screen_width * 2;
+                const h: f32 = s_y / screen_height * 2;
 
                 // 0
                 vertex_data[i + 0] = x;
