@@ -12,7 +12,7 @@ pub const PIXELS = 1;
 /// Margin around each glyph in the atlas.
 const MARGIN_PX = 1;
 
-const font_size = 15;
+const font_size = 14;
 
 const FontMapping = enum(usize) {
     Latin = 0,
@@ -38,8 +38,8 @@ pub const GlyphInfo = struct {
     y: i32,
     width: i32, // Width of the glyph in the bitmap (in px).
     height: i32,
-    bitmap_left: i32, // Offset from the left edge of the bitmap to where the glyph starts (in px).
-    bitmap_top: i32,
+    bearing_x: i32, // Offset from the left edge of the bitmap to where the glyph starts (in px).
+    bearing_y: i32,
 };
 
 pub const Font = struct {
@@ -117,7 +117,7 @@ pub const FontLibrary = struct {
             try font.ft_face.setPixelSizes(0, font_size);
         }
 
-        return .{
+        return FontLibrary{
             .allocator = allocator,
             .gctx = gctx,
             .ft_lib = ft_lib,
@@ -160,6 +160,10 @@ pub const FontLibrary = struct {
             defer buffer.deinit();
 
             buffer.guessSegmentProps();
+            // buffer.setDirection(hb.Direction.ltr);
+            // buffer.setLanguage(hb.Language.fromString("hi"));
+            // buffer.setScript(hb.Script.devanagari);
+
             buffer.addUTF8(value[range.start .. range.end + 1], 0, null);
 
             self.fonts[range.font].hb_font.shape(buffer, null);
@@ -168,12 +172,15 @@ pub const FontLibrary = struct {
             const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
 
             for (positions, infos) |pos, info| {
-                // After shaping it is glyph index not unicode point.
-                const glyph = self.glyphs.get(info.codepoint) orelse continue;
+                // After shaping it is a glyph index not unicode point.
+                const glyph = self.glyphs.get(info.codepoint) orelse {
+                    std.debug.print("No glyph for {d}\n", .{info.codepoint});
+                    continue;
+                };
 
-                try shapes.append(.{
-                    .x = cursor_x + @divFloor(glyph.bitmap_left, PIXELS),
-                    .y = cursor_y - @divFloor(glyph.bitmap_top, PIXELS),
+                try shapes.append(GlyphShape{
+                    .x = cursor_x + (pos.x_offset >> 6) + glyph.bearing_x,
+                    .y = cursor_y + (pos.y_offset >> 6) - glyph.bearing_y,
                     .glyph = glyph,
                 });
                 cursor_x += pos.x_advance >> 6;
@@ -241,7 +248,10 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: Gly
     var i: u32 = 0;
     for (ranges) |range| {
         for (range[0]..range[1]) |codepoint| {
-            const fontId = codepointToFont(codepoint) orelse return error.MissingRange;
+            const fontId = codepointToFont(codepoint) orelse {
+                std.debug.print("No font for {d}\n", .{codepoint});
+                continue;
+            };
             try fonts[fontId].ft_face.loadChar(@intCast(codepoint), .{ .render = true });
             const bitmap = fonts[fontId].ft_face.glyph().bitmap();
             sizes[i] = .{
@@ -260,21 +270,24 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: Gly
     i = 0;
     for (ranges) |range| {
         for (range[0]..range[1]) |codepoint| {
-            const fontId = codepointToFont(codepoint) orelse return error.MissingRange;
+            const fontId = codepointToFont(codepoint) orelse {
+                std.debug.print("No font for {d}\n", .{codepoint});
+                continue;
+            };
             const char_index = fonts[fontId].ft_face.getCharIndex(@intCast(codepoint)) orelse {
-                std.debug.print("Failed to get char index for codepoint {d}\n", .{codepoint});
+                std.debug.print("No getCharIndex() for {d}\n", .{codepoint});
                 continue;
             };
             try fonts[fontId].ft_face.loadGlyph(char_index, .{});
             const ft_glyph = fonts[fontId].ft_face.glyph();
 
-            try glyphs.put(@intCast(char_index), .{
+            try glyphs.put(@intCast(char_index), GlyphInfo{
                 .x = packing.positions[i][0],
                 .y = packing.positions[i][1],
                 .width = sizes[i][0],
                 .height = sizes[i][1],
-                .bitmap_left = ft_glyph.bitmapLeft() - MARGIN_PX,
-                .bitmap_top = ft_glyph.bitmapTop() - MARGIN_PX,
+                .bearing_x = ft_glyph.bitmapLeft() - MARGIN_PX,
+                .bearing_y = ft_glyph.bitmapTop() - MARGIN_PX,
             });
             i += 1;
         }
@@ -292,7 +305,10 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: Gly
             const packing_x: usize = @intCast(position[0]);
             const packing_y: usize = @intCast(position[1]);
 
-            const fontId = codepointToFont(codepoint) orelse return error.MissingRange;
+            const fontId = codepointToFont(codepoint) orelse {
+                std.debug.print("No font for {d}\n", .{codepoint});
+                continue;
+            };
             try fonts[fontId].ft_face.loadChar(@intCast(codepoint), .{ .render = true });
             const glyph_bitmap = fonts[fontId].ft_face.glyph().bitmap();
 
@@ -317,11 +333,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: Gly
     const end = std.time.nanoTimestamp();
     std.debug.print("Bitmap generation took {d}ms\n", .{@divTrunc(end - start, 1_000_000)});
 
-    return .{
-        .glyphs = glyphs,
-        .size = packing.size,
-        .bitmap = bitmap,
-    };
+    return .{ .glyphs = glyphs, .size = packing.size, .bitmap = bitmap };
 }
 
 /// Split the input string into list of ranges with the same font face.
@@ -335,7 +347,10 @@ fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
 
     while (iterator.nextCodepointSlice()) |slice| {
         const codepoint = try std.unicode.utf8Decode(slice);
-        const fontId = codepointToFont(codepoint) orelse return error.MissingRange;
+        const fontId = codepointToFont(codepoint) orelse {
+            std.debug.print("No font for {d}\n", .{codepoint});
+            continue;
+        };
 
         if (current_range) |*range| {
             if (range.font == fontId) {

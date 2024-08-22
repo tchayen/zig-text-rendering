@@ -25,12 +25,15 @@ zig build run
 
 ## TODO
 
-- [x] Margins between characters in the atlas (to fix bleeding)
-- [ ] Different text sizes in the atlas
-- [x] Splitting shaping into ranges handled by different fonts
+- [x] Margins between characters in the atlas (to fix bleeding).
+- [x] Splitting shaping into ranges handled by different fonts.
+- [x] ICU4X for line breaking [link](https://codeberg.org/linusg/icu4zig).
+- [ ] Proper line breaking.
+- [ ] Devanagari shaping seems incorrect - नमस्ते is rendering as "नमस् ते". Rework how glyphs are stored so that whole font is used not just glyphs with direct unicode mapping. This is causing ligatures to be missing.
+- [ ] Ranges seem to have off-by-one errors – missing last character in each one.
+- [ ] Different text sizes in the atlas.
 - [ ] Debug why arabic breaks font atlas.
-- [ ] Retina support
-- [ ] ICU4X for line breaking [link](https://codeberg.org/linusg/icu4zig)
+- [ ] Retina support.
 - [ ] Emojis (either SVG or bitmap)
 
 ## Links
