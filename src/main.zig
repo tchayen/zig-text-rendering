@@ -65,8 +65,9 @@ pub fn main() !void {
     var debug_font_atlas = DebugFontAtlas.init(gctx, font_library.atlas_texture);
     defer debug_font_atlas.deinit();
 
-    try printer.text("hello 안녕 नमस्ते ॿ cześć привіт こんにちは ラーメン", 200, 200);
+    try printer.text("hello नमस्ते ॿ cześć привіт こんにちは ラーメン", 200, 200);
     try printer.text("मेरा नाम लार्स है", 200, 280);
+    try printer.text("لمّا كان الاعتراف بالكرامة مرحبًا", 200, 350);
     // try printer.text("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut gravida, sem vel facilisis porttitor, tortor diam suscipit ipsum, at tristique nulla urna in ex. In hac habitasse platea dictumst. Cras faucibus ut dolor eu ornare. Donec eu rutrum elit. Nunc vitae libero sollicitudin, dictum quam quis, accumsan dui. Sed congue euismod dui, finibus semper quam feugiat consectetur. Integer aliquet vel odio in pulvinar. Vestibulum lobortis erat non nisl pretium tempus. Donec vestibulum sem eu erat luctus eleifend. Pellentesque at dictum tortor. Morbi ac porta ligula. Etiam euismod non ex at vestibulum. Nam in ante vel orci sodales tristique id vitae arcu. Ut quis feugiat magna, sed facilisis diam. Cras orci augue, porttitor et hendrerit vitae, suscipit ac enim.", 200, 300);
     // try printer.text("مرحبًا", 200, 300);
     // try printer.text("hello how are you doing?", 200, 200);

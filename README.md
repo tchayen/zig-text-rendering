@@ -1,4 +1,4 @@
-# zig-rendering
+# zig-text-rendering
 
 Basic setup of libraries for:
 
@@ -28,13 +28,15 @@ zig build run
 - [x] Margins between characters in the atlas (to fix bleeding).
 - [x] Splitting shaping into ranges handled by different fonts.
 - [x] ICU4X for line breaking [link](https://codeberg.org/linusg/icu4zig).
+- [x] Devanagari shaping seems incorrect - नमस्ते is rendering as "नमस् ते". Rework how glyphs are stored so that whole font is used not just glyphs with direct unicode mapping. This is causing ligatures to be missing.
+- [x] Unless Devanagari script is selected in HarfBuzz, it will use wrong ligatures. Figure out how to select script automatically.
+- [x] Ranges seem to have off-by-one errors – missing last character in each one.
+- [x] Debug why arabic breaks font atlas (it was overlapping indexes between font faces).
+- [ ] Detect if given unicode character is already present in the atlas and skip it. This is a solution for all font faces including latin alphabet.
 - [ ] Proper line breaking.
-- [ ] Devanagari shaping seems incorrect - नमस्ते is rendering as "नमस् ते". Rework how glyphs are stored so that whole font is used not just glyphs with direct unicode mapping. This is causing ligatures to be missing.
-- [ ] Ranges seem to have off-by-one errors – missing last character in each one.
 - [ ] Different text sizes in the atlas.
-- [ ] Debug why arabic breaks font atlas.
 - [ ] Retina support.
-- [ ] Emojis (either SVG or bitmap)
+- [ ] Emojis (either SVG or bitmap).
 
 ## Links
 

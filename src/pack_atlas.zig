@@ -47,7 +47,7 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]i32, area_factor: f32) !Pa
     }
     std.mem.sort(Rectangle, rectangles, {}, sortBySizeFn);
 
-    const approximateSize: i32 = @intFromFloat(@ceil(@sqrt(area) * area_factor));
+    const approximateSize: i32 = @intCast(ceilPowerOfTwo(@intFromFloat(@ceil(@sqrt(area) * area_factor))));
 
     const root = try arena_allocator.create(Node);
     root.* = .{

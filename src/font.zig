@@ -12,19 +12,22 @@ pub const PIXELS = 1;
 /// Margin around each glyph in the atlas.
 const MARGIN_PX = 1;
 
-const font_size = 14;
+const font_size = 18;
 
 const FontMapping = enum(usize) {
     Latin = 0,
-    Korean = 1,
-    Japanese = 2,
-    Arabic = 3,
+    Japanese = 1,
+    Arabic = 2,
 };
 
+const RGBA = struct { r: u8, g: u8, b: u8, a: u8 };
+
 const Range = struct {
-    font: usize, // ID of the font (FontMapping).
+    script: hb.Script, // Script used by the range.
     start: usize, // First byte index.
     end: usize, // Last byte index (inclusive).
+    // color: RGBA, <- Styling will probably go here into the ranges.
+    // font_size: i32,
 };
 
 pub const GlyphShape = struct {
@@ -42,54 +45,51 @@ pub const GlyphInfo = struct {
     bearing_y: i32,
 };
 
+const GlyphMap = std.AutoHashMap(u32, GlyphInfo);
+
 pub const Font = struct {
     ft_face: ft.Face,
     hb_face: hb.Face,
     hb_font: hb.Font,
+    glyphs: GlyphMap,
 };
 
-const GlyphMap = std.AutoHashMap(u32, GlyphInfo);
-
 const latin = @embedFile("./assets/NotoSans-Regular.ttf");
-const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
 const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
+// const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
 const ar = @embedFile("./assets/NotoSansArabic-Regular.ttf");
-const emoji = @embedFile("./assets/NotoColorEmoji-Regular.ttf");
-const emoji_svg = @embedFile("./assets/NotoColorEmoji-SVG.otf");
+// const emoji = @embedFile("./assets/NotoColorEmoji-Regular.ttf");
+// const emoji_svg = @embedFile("./assets/NotoColorEmoji-SVG.otf");
 
 /// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method.
 pub const FontLibrary = struct {
     allocator: Allocator,
     gctx: *zgpu.GraphicsContext,
     ft_lib: ft.Library,
-    fonts: [4]Font,
+    fonts: []Font,
     atlas_texture: zgpu.TextureHandle,
     atlas_size: u32,
-    glyphs: GlyphMap,
 
     pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext) !FontLibrary {
         const ft_lib = try ft.Library.init();
 
-        var fonts: [4]Font = undefined;
+        var fonts = try allocator.alloc(Font, 3);
         fonts[0].ft_face = try ft_lib.createFaceMemory(latin, 0);
         fonts[0].hb_face = hb.Face.fromFreetypeFace(fonts[0].ft_face);
         fonts[0].hb_font = hb.Font.init(fonts[0].hb_face);
 
-        fonts[1].ft_face = try ft_lib.createFaceMemory(kr, 0);
+        fonts[1].ft_face = try ft_lib.createFaceMemory(jp, 0);
         fonts[1].hb_face = hb.Face.fromFreetypeFace(fonts[1].ft_face);
         fonts[1].hb_font = hb.Font.init(fonts[1].hb_face);
 
-        fonts[2].ft_face = try ft_lib.createFaceMemory(jp, 0);
+        fonts[2].ft_face = try ft_lib.createFaceMemory(ar, 0);
         fonts[2].hb_face = hb.Face.fromFreetypeFace(fonts[2].ft_face);
         fonts[2].hb_font = hb.Font.init(fonts[2].hb_face);
 
-        fonts[3].ft_face = try ft_lib.createFaceMemory(ar, 0);
-        fonts[3].hb_face = hb.Face.fromFreetypeFace(fonts[3].ft_face);
-        fonts[3].hb_font = hb.Font.init(fonts[3].hb_face);
-
-        for (fonts) |font| {
+        for (fonts) |*font| {
             try font.ft_face.setPixelSizes(0, font_size * PIXELS);
             font.hb_font.setScale(font_size * 64, font_size * 64);
+            font.glyphs = GlyphMap.init(allocator);
         }
 
         const font_atlas = try generateFontAtlas(allocator, fonts);
@@ -124,18 +124,18 @@ pub const FontLibrary = struct {
             .fonts = fonts,
             .atlas_texture = atlas_texture,
             .atlas_size = font_atlas.size,
-            .glyphs = font_atlas.glyphs,
         };
     }
 
     pub fn deinit(self: *FontLibrary) void {
-        for (self.fonts) |font| {
+        for (self.fonts) |*font| {
             font.hb_font.deinit();
             font.ft_face.deinit();
+            font.glyphs.deinit();
         }
+        self.allocator.free(self.fonts);
         self.ft_lib.deinit();
         self.gctx.releaseResource(self.atlas_texture);
-        self.glyphs.deinit();
     }
 
     pub fn shape(self: *FontLibrary, allocator: Allocator, value: []const u8, max_width: i32) ![]GlyphShape {
@@ -159,21 +159,26 @@ pub const FontLibrary = struct {
             var buffer = hb.Buffer.init() orelse return error.OutOfMemory;
             defer buffer.deinit();
 
-            buffer.guessSegmentProps();
-            // buffer.setDirection(hb.Direction.ltr);
+            // buffer.guessSegmentProps();
             // buffer.setLanguage(hb.Language.fromString("hi"));
-            // buffer.setScript(hb.Script.devanagari);
+            buffer.setDirection(scriptToDirection(range.script));
+            buffer.setScript(range.script);
 
             buffer.addUTF8(value[range.start .. range.end + 1], 0, null);
 
-            self.fonts[range.font].hb_font.shape(buffer, null);
+            const fontId = scriptToFont(range.script) orelse {
+                std.debug.print("No font for script {d}\n", .{@intFromEnum(range.script)});
+                continue;
+            };
+
+            self.fonts[fontId].hb_font.shape(buffer, null);
 
             const infos = buffer.getGlyphInfos();
             const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
 
             for (positions, infos) |pos, info| {
                 // After shaping it is a glyph index not unicode point.
-                const glyph = self.glyphs.get(info.codepoint) orelse {
+                const glyph = self.fonts[fontId].glyphs.get(info.codepoint) orelse {
                     std.debug.print("No glyph for {d}\n", .{info.codepoint});
                     continue;
                 };
@@ -195,68 +200,61 @@ pub const FontLibrary = struct {
     }
 };
 
-fn codepointToFont(codepoint: u64) ?usize {
+fn codepointToScript(codepoint: u64) hb.Script {
     return switch (codepoint) {
-        0x0020...0x007F,
-        0x00A0...0x00FF,
-        0x0100...0x017F,
-        0x0180...0x024F,
-        0x0900...0x097F,
-        0x0400...0x04FF,
-        => @intFromEnum(FontMapping.Latin),
-        0x1100...0x11FF,
-        0xAC00...0xD7A3,
-        => @intFromEnum(FontMapping.Korean),
-        0x3000...0x303F,
-        0x3041...0x3096,
-        0x30A0...0x30FF,
-        => @intFromEnum(FontMapping.Japanese),
-        0x0600...0x06FF,
-        => @intFromEnum(FontMapping.Arabic),
+        0x0020...0x007F => hb.Script.latin,
+        0x00A0...0x00FF => hb.Script.latin,
+        0x0100...0x017F => hb.Script.latin,
+        0x0180...0x024F => hb.Script.latin,
+        0x0900...0x097F => hb.Script.devanagari,
+        0x0600...0x06FF => hb.Script.arabic,
+        0x3041...0x3096 => hb.Script.hiragana,
+        0x30A0...0x30FF => hb.Script.katakana,
+        else => hb.Script.common,
+    };
+}
+
+fn scriptToFont(script: hb.Script) ?usize {
+    return switch (script) {
+        hb.Script.latin => @intFromEnum(FontMapping.Latin),
+        hb.Script.devanagari => @intFromEnum(FontMapping.Latin),
+        hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
+        hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
+        hb.Script.arabic => @intFromEnum(FontMapping.Arabic),
         else => null,
     };
 }
 
-/// Generate font atlas texture from the input fonts.
-fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: GlyphMap, size: u32, bitmap: []u8 } {
-    const ranges = [_][2]u32{
-        [_]u32{ 0x0020, 0x007F }, // Basic Latin
-        [_]u32{ 0x00A0, 0x00FF }, // Latin-1 Supplement
-        [_]u32{ 0x0100, 0x017F }, // Latin Extended-A
-        [_]u32{ 0x0180, 0x024F }, // Latin Extended-B
-        [_]u32{ 0x1100, 0x11FF }, // Hangul Jamo
-        [_]u32{ 0xAC00, 0xD7A3 }, // Hangul Syllables
-        [_]u32{ 0x0400, 0x04FF }, // Cyrillic
-        [_]u32{ 0x0900, 0x097F }, // Devanagari
-        [_]u32{ 0x3000, 0x303F }, // CJK Symbols and Punctuation
-        [_]u32{ 0x3041, 0x3096 }, // Hiragana
-        [_]u32{ 0x30A0, 0x30FF }, // Katakana
-        // [_]u32{ 0x0600, 0x06FF }, // Arabic
+fn scriptToDirection(script: hb.Script) hb.Direction {
+    return switch (script) {
+        hb.Script.arabic => hb.Direction.rtl,
+        else => hb.Direction.ltr,
     };
+}
 
+/// Generate font atlas texture from the input fonts.
+fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, bitmap: []u8 } {
+    const start = std.time.nanoTimestamp();
     var all_characters_len: u64 = 0;
-    for (ranges) |range| {
-        all_characters_len += range[1] - range[0];
+    for (fonts) |f| {
+        all_characters_len += f.ft_face.numGlyphs();
     }
+
+    std.debug.print("Total characters: {d}\n", .{all_characters_len});
 
     const sizes = try allocator.alloc([2]i32, all_characters_len);
     defer allocator.free(sizes);
 
-    var glyphs = GlyphMap.init(allocator);
-
     // Iterate over ranges.
     var i: u32 = 0;
-    for (ranges) |range| {
-        for (range[0]..range[1]) |codepoint| {
-            const fontId = codepointToFont(codepoint) orelse {
-                std.debug.print("No font for {d}\n", .{codepoint});
-                continue;
-            };
-            try fonts[fontId].ft_face.loadChar(@intCast(codepoint), .{ .render = true });
-            const bitmap = fonts[fontId].ft_face.glyph().bitmap();
+    for (fonts) |f| {
+        for (0..f.ft_face.numGlyphs()) |j| {
+            try f.ft_face.loadGlyph(@intCast(j), .{});
+            const ft_glyph = f.ft_face.glyph();
+            const ft_bitmap = ft_glyph.bitmap();
             sizes[i] = .{
-                @intCast(bitmap.width() + MARGIN_PX * 2),
-                @intCast(bitmap.rows() + MARGIN_PX * 2),
+                @intCast(ft_bitmap.width() + MARGIN_PX * 2),
+                @intCast(ft_bitmap.rows() + MARGIN_PX * 2),
             };
             i += 1;
         }
@@ -265,23 +263,18 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: Gly
     const packing = try pack_atlas.pack(allocator, sizes, 1.1);
     defer allocator.free(packing.positions);
 
-    std.debug.print("Atlas size: {d}\n", .{packing.size});
+    std.debug.print("Atlas size: {d}x{d}px\n", .{ packing.size, packing.size });
 
+    const bitmap = try allocator.alloc(u8, @intCast(packing.size * packing.size));
+    @memset(bitmap, 0); // Clear the bitmap.
+
+    // Once positions are known, we can generate the glyphs mapping and bitmap.
     i = 0;
-    for (ranges) |range| {
-        for (range[0]..range[1]) |codepoint| {
-            const fontId = codepointToFont(codepoint) orelse {
-                std.debug.print("No font for {d}\n", .{codepoint});
-                continue;
-            };
-            const char_index = fonts[fontId].ft_face.getCharIndex(@intCast(codepoint)) orelse {
-                std.debug.print("No getCharIndex() for {d}\n", .{codepoint});
-                continue;
-            };
-            try fonts[fontId].ft_face.loadGlyph(char_index, .{});
-            const ft_glyph = fonts[fontId].ft_face.glyph();
-
-            try glyphs.put(@intCast(char_index), GlyphInfo{
+    for (fonts) |*f| {
+        for (0..f.ft_face.numGlyphs()) |j| {
+            try f.ft_face.loadGlyph(@intCast(j), .{ .render = true });
+            const ft_glyph = f.ft_face.glyph();
+            try f.glyphs.put(@intCast(j), GlyphInfo{
                 .x = packing.positions[i][0],
                 .y = packing.positions[i][1],
                 .width = sizes[i][0],
@@ -289,54 +282,35 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: Gly
                 .bearing_x = ft_glyph.bitmapLeft() - MARGIN_PX,
                 .bearing_y = ft_glyph.bitmapTop() - MARGIN_PX,
             });
-            i += 1;
-        }
-    }
 
-    const bitmap = try allocator.alloc(u8, @intCast(packing.size * packing.size));
-    @memset(bitmap, 0); // Clear the bitmap.
-
-    // Print all bitmaps.
-    const start = std.time.nanoTimestamp();
-    i = 0;
-    for (ranges) |range| {
-        for (range[0]..range[1]) |codepoint| {
             const position = packing.positions[i];
             const packing_x: usize = @intCast(position[0]);
             const packing_y: usize = @intCast(position[1]);
-
-            const fontId = codepointToFont(codepoint) orelse {
-                std.debug.print("No font for {d}\n", .{codepoint});
-                continue;
-            };
-            try fonts[fontId].ft_face.loadChar(@intCast(codepoint), .{ .render = true });
-            const glyph_bitmap = fonts[fontId].ft_face.glyph().bitmap();
-
-            switch (glyph_bitmap.pixelMode()) {
+            const ft_bitmap = ft_glyph.bitmap();
+            switch (ft_bitmap.pixelMode()) {
                 .gray => {
-                    // Gray bitmap.
-                    for (0..glyph_bitmap.rows()) |y| {
-                        for (0..glyph_bitmap.width()) |x| {
+                    for (0..ft_bitmap.rows()) |y| {
+                        for (0..ft_bitmap.width()) |x| {
                             const index = (packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX;
-                            const value = glyph_bitmap.buffer().?[y * glyph_bitmap.width() + x];
+                            const buffer = ft_bitmap.buffer() orelse continue;
+                            const value = buffer[y * ft_bitmap.width() + x];
                             bitmap[index] = value;
                         }
                     }
                 },
-                else => {
-                    std.debug.print("Unsupported pixel mode {}\n", .{glyph_bitmap.pixelMode()});
-                },
+                else => unreachable,
             }
             i += 1;
         }
     }
+
     const end = std.time.nanoTimestamp();
     std.debug.print("Bitmap generation took {d}ms\n", .{@divTrunc(end - start, 1_000_000)});
 
-    return .{ .glyphs = glyphs, .size = packing.size, .bitmap = bitmap };
+    return .{ .size = packing.size, .bitmap = bitmap };
 }
 
-/// Split the input string into list of ranges with the same font face.
+/// Split the input string into list of ranges with the same script.
 fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
     var ranges = std.ArrayList(Range).init(allocator);
     var utf8 = try std.unicode.Utf8View.init(value);
@@ -347,25 +321,22 @@ fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
 
     while (iterator.nextCodepointSlice()) |slice| {
         const codepoint = try std.unicode.utf8Decode(slice);
-        const fontId = codepointToFont(codepoint) orelse {
-            std.debug.print("No font for {d}\n", .{codepoint});
-            continue;
-        };
+        const script = codepointToScript(codepoint);
 
         if (current_range) |*range| {
-            if (range.font == fontId) {
+            if (range.script == script) {
                 range.end = byte_index + slice.len - 1;
             } else {
                 try ranges.append(range.*);
                 current_range = Range{
-                    .font = fontId,
+                    .script = script,
                     .start = byte_index,
                     .end = byte_index + slice.len - 1,
                 };
             }
         } else {
             current_range = Range{
-                .font = fontId,
+                .script = script,
                 .start = byte_index,
                 .end = byte_index + slice.len - 1,
             };
