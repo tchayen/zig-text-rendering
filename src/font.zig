@@ -22,23 +22,23 @@ const FontMapping = enum(usize) {
 };
 
 const Range = struct {
-    font: usize,
-    start: usize,
-    end: usize,
+    font: usize, // ID of the font (FontMapping).
+    start: usize, // First byte index.
+    end: usize, // Last byte index (inclusive).
 };
 
 pub const GlyphShape = struct {
-    x: i32,
+    x: i32, // x position after shaping (in px).
     y: i32,
     glyph: GlyphInfo,
 };
 
 pub const GlyphInfo = struct {
-    x: i32,
+    x: i32, // The x position in the atlas (in px).
     y: i32,
-    width: i32,
+    width: i32, // Width of the glyph in the bitmap (in px).
     height: i32,
-    bitmap_left: i32,
+    bitmap_left: i32, // Offset from the left edge of the bitmap to where the glyph starts (in px).
     bitmap_top: i32,
 };
 
@@ -58,16 +58,16 @@ const emoji = @embedFile("./assets/NotoColorEmoji-Regular.ttf");
 const emoji_svg = @embedFile("./assets/NotoColorEmoji-SVG.otf");
 
 /// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method.
-pub const TextRendering = struct {
+pub const FontLibrary = struct {
     allocator: Allocator,
     gctx: *zgpu.GraphicsContext,
     ft_lib: ft.Library,
     fonts: [4]Font,
     atlas_texture: zgpu.TextureHandle,
     atlas_size: u32,
-    glyph_map: GlyphMap,
+    glyphs: GlyphMap,
 
-    pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext) !TextRendering {
+    pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext) !FontLibrary {
         const ft_lib = try ft.Library.init();
 
         var fonts: [4]Font = undefined;
@@ -124,21 +124,22 @@ pub const TextRendering = struct {
             .fonts = fonts,
             .atlas_texture = atlas_texture,
             .atlas_size = font_atlas.size,
-            .glyph_map = font_atlas.glyph_map,
+            .glyphs = font_atlas.glyphs,
         };
     }
 
-    pub fn deinit(self: *TextRendering) void {
+    pub fn deinit(self: *FontLibrary) void {
         for (self.fonts) |font| {
             font.hb_font.deinit();
             font.ft_face.deinit();
         }
         self.ft_lib.deinit();
         self.gctx.releaseResource(self.atlas_texture);
-        self.glyph_map.deinit();
+        self.glyphs.deinit();
     }
 
-    pub fn shape(self: *TextRendering, allocator: Allocator, value: []const u8, max_width: i32) ![]GlyphShape {
+    pub fn shape(self: *FontLibrary, allocator: Allocator, value: []const u8, max_width: i32) ![]GlyphShape {
+        _ = max_width; // autofix
         const ranges = try getRanges(allocator, value);
         defer allocator.free(ranges);
 
@@ -146,16 +147,19 @@ pub const TextRendering = struct {
         var cursor_x: i32 = 0;
         var cursor_y: i32 = 0;
 
-        // const segments = segment(allocator, value);
-        // defer allocator.free(segments);
+        const segments = try segment(allocator, value);
+        defer allocator.free(segments);
+
+        for (segments) |s| {
+            std.debug.print("{d} ", .{s});
+        }
+        std.debug.print("\n", .{});
 
         for (ranges) |range| {
             var buffer = hb.Buffer.init() orelse return error.OutOfMemory;
             defer buffer.deinit();
 
-            buffer.setDirection(hb.Direction.ltr);
-            buffer.setScript(hb.Script.latin);
-            buffer.setLanguage(hb.Language.fromString("en"));
+            buffer.guessSegmentProps();
             buffer.addUTF8(value[range.start .. range.end + 1], 0, null);
 
             self.fonts[range.font].hb_font.shape(buffer, null);
@@ -164,12 +168,8 @@ pub const TextRendering = struct {
             const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
 
             for (positions, infos) |pos, info| {
-                const glyph = self.glyph_map.get(info.codepoint) orelse continue;
-
-                if (cursor_x + (pos.x_advance >> 6) > max_width) {
-                    cursor_x = 0;
-                    cursor_y += font_size + 6;
-                }
+                // After shaping it is glyph index not unicode point.
+                const glyph = self.glyphs.get(info.codepoint) orelse continue;
 
                 try shapes.append(.{
                     .x = cursor_x + @divFloor(glyph.bitmap_left, PIXELS),
@@ -178,8 +178,11 @@ pub const TextRendering = struct {
                 });
                 cursor_x += pos.x_advance >> 6;
                 cursor_y += pos.y_advance >> 6;
+
+                std.debug.print("{d} {d}, ", .{ info.codepoint, info.cluster });
             }
         }
+        std.debug.print("\n", .{});
 
         return shapes.toOwnedSlice();
     }
@@ -208,7 +211,7 @@ fn codepointToFont(codepoint: u64) ?usize {
 }
 
 /// Generate font atlas texture from the input fonts.
-fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyph_map: GlyphMap, size: u32, bitmap: []u8 } {
+fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyphs: GlyphMap, size: u32, bitmap: []u8 } {
     const ranges = [_][2]u32{
         [_]u32{ 0x0020, 0x007F }, // Basic Latin
         [_]u32{ 0x00A0, 0x00FF }, // Latin-1 Supplement
@@ -232,7 +235,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyph_map: 
     const sizes = try allocator.alloc([2]i32, all_characters_len);
     defer allocator.free(sizes);
 
-    var map = GlyphMap.init(allocator);
+    var glyphs = GlyphMap.init(allocator);
 
     // Iterate over ranges.
     var i: u32 = 0;
@@ -265,7 +268,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyph_map: 
             try fonts[fontId].ft_face.loadGlyph(char_index, .{});
             const ft_glyph = fonts[fontId].ft_face.glyph();
 
-            try map.put(@intCast(char_index), .{
+            try glyphs.put(@intCast(char_index), .{
                 .x = packing.positions[i][0],
                 .y = packing.positions[i][1],
                 .width = sizes[i][0],
@@ -315,7 +318,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: [4]Font) !struct { glyph_map: 
     std.debug.print("Bitmap generation took {d}ms\n", .{@divTrunc(end - start, 1_000_000)});
 
     return .{
-        .glyph_map = map,
+        .glyphs = glyphs,
         .size = packing.size,
         .bitmap = bitmap,
     };
@@ -362,7 +365,7 @@ fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
     return ranges.toOwnedSlice();
 }
 
-/// WIP segment text into words using ICU4X.
+/// Segment text into words using ICU4X. Returns a slice of indices where words start or end.
 pub fn segment(allocator: Allocator, value: []const u8) ![]u32 {
     const data_provider = icu4x.DataProvider.init();
     defer data_provider.deinit();

@@ -2,7 +2,7 @@ const std = @import("std");
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 const zm = @import("zmath");
-const TextRendering = @import("font.zig").TextRendering;
+const FontLibrary = @import("font.zig").FontLibrary;
 const PIXELS = @import("font.zig").PIXELS;
 const utils = @import("utils.zig");
 
@@ -48,7 +48,7 @@ const Command = struct {
 pub const Printer = struct {
     gctx: *zgpu.GraphicsContext,
     allocator: std.mem.Allocator,
-    text_rendering: *TextRendering,
+    font_library: *FontLibrary,
 
     pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
@@ -61,7 +61,7 @@ pub const Printer = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         gctx: *zgpu.GraphicsContext,
-        text_rendering: *TextRendering,
+        font_library: *FontLibrary,
     ) !Printer {
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
@@ -137,7 +137,7 @@ pub const Printer = struct {
             .address_mode_w = .clamp_to_edge,
             .max_anisotropy = 1,
         });
-        const atlas_texture_view = gctx.createTextureView(text_rendering.atlas_texture, .{});
+        const atlas_texture_view = gctx.createTextureView(font_library.atlas_texture, .{});
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &.{
             .{ .binding = 0, .texture_view_handle = atlas_texture_view },
@@ -152,7 +152,7 @@ pub const Printer = struct {
         return Printer{
             .gctx = gctx,
             .allocator = allocator,
-            .text_rendering = text_rendering,
+            .font_library = font_library,
 
             .pipeline = pipeline,
             .bind_group = bind_group,
@@ -174,33 +174,34 @@ pub const Printer = struct {
         back_buffer_view: zgpu.wgpu.TextureView,
         encoder: zgpu.wgpu.CommandEncoder,
     ) !void {
-        var glyphs: u32 = 0;
+        const atlas_size: f32 = @floatFromInt(self.font_library.atlas_size);
+
+        var glyph_count: u32 = 0;
         for (0..self.command_count) |i| {
-            glyphs += @intCast(self.commands[i].text.len);
+            glyph_count += @intCast(self.commands[i].text.len);
         }
 
+        // TODO: store previous buffer and detect if it is still valid and only render if not.
         const vertex_buffer = self.gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
-            .size = glyphs * 2 * 12 * @sizeOf(f32),
+            .size = glyph_count * 2 * 12 * @sizeOf(f32),
         });
         defer self.gctx.releaseResource(vertex_buffer);
 
-        const vertex_data = try self.allocator.alloc(f32, glyphs * 2 * 12);
+        const vertex_data = try self.allocator.alloc(f32, glyph_count * 2 * 12);
         defer self.allocator.free(vertex_data);
-
-        const atlas_size: f32 = @floatFromInt(self.text_rendering.atlas_size);
 
         var i: u32 = 0;
         for (0..self.command_count) |c| {
             const value = self.commands[c];
-            const glyph_infos = try self.text_rendering.shape(
+            const glyphs = try self.font_library.shape(
                 self.allocator,
                 value.text,
                 300, //std.math.maxInt(i32),
             );
-            defer self.allocator.free(glyph_infos);
+            defer self.allocator.free(glyphs);
 
-            for (glyph_infos) |info| {
+            for (glyphs) |info| {
                 const p_x: f32 = @floatFromInt(info.glyph.x);
                 const p_y: f32 = @floatFromInt(info.glyph.y);
                 const s_x: f32 = @floatFromInt(info.glyph.width);
@@ -283,7 +284,7 @@ pub const Printer = struct {
         pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bind_group, &.{});
-        pass.draw(glyphs * 6, 1, 0, 0);
+        pass.draw(glyph_count * 6, 1, 0, 0);
 
         @memset(self.commands, .{ .position = .{ 0, 0 }, .text = "" });
         self.command_count = 0;
