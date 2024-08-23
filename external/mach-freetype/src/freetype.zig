@@ -8,6 +8,8 @@ pub const c = @cImport({
     @cInclude("freetype/ftstroke.h");
     @cInclude("freetype/fttrigon.h");
     @cInclude("freetype/ftsynth.h");
+    @cInclude("freetype/otsvg.h");
+    @cInclude("freetype/ftmodapi.h");
 });
 
 pub const Affine23 = c.FT_Affine23;
@@ -275,7 +277,8 @@ pub const LoadFlags = packed struct(c_int) {
     color: bool = false,
     compute_metrics: bool = false,
     bitmap_metrics_only: bool = false,
-    _padding0: u9 = 0,
+    no_svg: bool = false,
+    _padding0: u8 = 0,
 };
 
 pub const OpenFlags = packed struct(c_int) {
@@ -297,6 +300,13 @@ pub const StyleFlags = packed struct(c_long) {
     italic: bool = false,
     bold: bool = false,
     _padding: if (@sizeOf(c_long) == 4) u30 else u62 = 0,
+};
+
+pub const SVGRendererHooks = struct {
+    init_svg: c.SVG_Lib_Init_Func,
+    free_svg: c.SVG_Lib_Free_Func,
+    render_svg: c.SVG_Lib_Render_Func,
+    preset_slot: c.SVG_Lib_Preset_Slot_Func,
 };
 
 pub const Bitmap = struct {
@@ -1044,6 +1054,10 @@ pub const Library = struct {
     pub fn setLcdFilter(self: Library, lcd_filter: LcdFilter) Error!void {
         return intToError(c.FT_Library_SetLcdFilter(self.handle, @intFromEnum(lcd_filter)));
     }
+
+    pub fn setProperty(self: Library, module_name: [*c]const u8, property_name: [*c]const u8, value: *const anyopaque) Error!void {
+        return intToError(c.FT_Property_Set(self.handle, module_name, property_name, value));
+    }
 };
 
 pub const OpenArgs = struct {
@@ -1567,6 +1581,7 @@ pub const Error = error{
     BbxTooBig,
     CorruptedFontHeader,
     CorruptedFontGlyphs,
+    MissingSVGHooks,
 };
 
 pub fn intToError(err: c_int) Error!void {
@@ -1661,7 +1676,11 @@ pub fn intToError(err: c_int) Error!void {
         c.FT_Err_Bbx_Too_Big => Error.BbxTooBig,
         c.FT_Err_Corrupted_Font_Header => Error.CorruptedFontHeader,
         c.FT_Err_Corrupted_Font_Glyphs => Error.CorruptedFontGlyphs,
-        else => unreachable,
+        c.FT_Err_Missing_SVG_Hooks => Error.MissingSVGHooks,
+        else => {
+            std.debug.print("mach/freetype: Unknown error code: {d}\n", .{err});
+            unreachable;
+        },
     };
 }
 

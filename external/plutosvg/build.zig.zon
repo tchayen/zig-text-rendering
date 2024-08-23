@@ -1,0 +1,14 @@
+.{
+    .name = "plutosvg",
+    .version = "0.0.0",
+    .dependencies = .{
+        .plutovg = .{ .path = "../plutovg" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "source",
+        "LICENSE",
+        "README.md",
+    },
+}

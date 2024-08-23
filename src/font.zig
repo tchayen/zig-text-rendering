@@ -5,6 +5,7 @@ const ft = @import("mach-freetype");
 const hb = @import("mach-harfbuzz");
 const pack_atlas = @import("pack_atlas.zig");
 const icu4x = @import("icu4zig");
+const plutosvg = @import("plutosvg.zig");
 
 /// Margin around each glyph in the atlas.
 const MARGIN_PX = 1;
@@ -56,7 +57,7 @@ const latin = @embedFile("./assets/NotoSans-Regular.ttf");
 // const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
 // const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
 const ar = @embedFile("./assets/NotoSansArabic-Regular.ttf");
-// const emoji = @embedFile("./assets/NotoColorEmoji-Regular.ttf");
+const emoji = @embedFile("./assets/NotoColorEmoji-COLRv1.ttf");
 // const emoji_svg = @embedFile("./assets/NotoColorEmoji-SVG.otf");
 
 /// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method.
@@ -73,15 +74,36 @@ pub const FontLibrary = struct {
 
     pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext, dpr: u32) !FontLibrary {
         const ft_lib = try ft.Library.init();
+        const v = ft_lib.version();
+        std.debug.print("FreeType version: {d}.{d}.{d}\n", .{ v.major, v.minor, v.patch });
 
-        var fonts = try allocator.alloc(Font, 2);
-        fonts[0].ft_face = try ft_lib.createFaceMemory(latin, 0);
-        fonts[0].hb_face = hb.Face.fromFreetypeFace(fonts[0].ft_face);
-        fonts[0].hb_font = hb.Font.init(fonts[0].hb_face);
+        var fonts = try allocator.alloc(Font, 3);
 
-        fonts[1].ft_face = try ft_lib.createFaceMemory(ar, 0);
-        fonts[1].hb_face = hb.Face.fromFreetypeFace(fonts[1].ft_face);
-        fonts[1].hb_font = hb.Font.init(fonts[1].hb_face);
+        var i: usize = 0;
+        fonts[i].ft_face = try ft_lib.createFaceMemory(latin, 0);
+        fonts[i].hb_face = hb.Face.fromFreetypeFace(fonts[i].ft_face);
+        fonts[i].hb_font = hb.Font.init(fonts[i].hb_face);
+        i = 1;
+        fonts[i].ft_face = try ft_lib.createFaceMemory(ar, 0);
+        fonts[i].hb_face = hb.Face.fromFreetypeFace(fonts[i].ft_face);
+        fonts[i].hb_font = hb.Font.init(fonts[i].hb_face);
+        i = 2;
+        fonts[i].ft_face = try ft_lib.createFaceMemory(emoji, 0);
+        fonts[i].hb_face = hb.Face.fromFreetypeFace(fonts[i].ft_face);
+        fonts[i].hb_font = hb.Font.init(fonts[i].hb_face);
+
+        const ft_emoji_face = try ft_lib.createFaceMemory(emoji, 0);
+        defer ft_emoji_face.deinit();
+        const hb_emoji_face = hb.Face.fromFreetypeFace(ft_emoji_face);
+        defer hb_emoji_face.deinit();
+
+        const hooks = plutosvg.c.plutosvg_ft_svg_hooks() orelse return error.PlutoSVG;
+        try ft_lib.setProperty("ot-svg", "svg-hooks", hooks);
+
+        // try ft_emoji_face.loadChar(0x1F600, .{ .color = true, .render = true });
+        // const ft_emoji_glyph = ft_emoji_face.glyph();
+        // const ft_emoji_bitmap = ft_emoji_glyph.bitmap();
+        // _ = ft_emoji_bitmap; // autofix
 
         // fonts[2].ft_face = try ft_lib.createFaceMemory(jp, 0);
         // fonts[2].hb_face = hb.Face.fromFreetypeFace(fonts[2].ft_face);
@@ -92,6 +114,14 @@ pub const FontLibrary = struct {
             const hb_font_size: i32 = font_size * @as(i32, @intCast(dpr)) * 64;
             font.hb_font.setScale(hb_font_size, hb_font_size);
             font.glyphs = GlyphMap.init(allocator);
+
+            std.debug.print("Font: {s}, hasColor: {s}, isScalable: {s}, isFixedWidth: {s} isSfnt: {s}\n", .{
+                font.ft_face.familyName() orelse "Unknown",
+                if (font.ft_face.hasColor()) "true" else "false",
+                if (font.ft_face.isScalable()) "true" else "false",
+                if (font.ft_face.isFixedWidth()) "true" else "false",
+                if (font.ft_face.isSfnt()) "true" else "false",
+            });
         }
 
         const font_atlas = try generateFontAtlas(allocator, fonts);
@@ -242,9 +272,12 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
             try f.ft_face.loadGlyph(@intCast(j), .{});
             const ft_glyph = f.ft_face.glyph();
             const ft_bitmap = ft_glyph.bitmap();
-            sizes[i] = .{
-                @intCast(ft_bitmap.width() + MARGIN_PX * 2),
-                @intCast(ft_bitmap.rows() + MARGIN_PX * 2),
+            const w = ft_bitmap.width();
+            const h = ft_bitmap.rows();
+
+            sizes[i] = if (w == 0 or h == 0) .{ 0, 0 } else .{
+                @intCast(w + MARGIN_PX * 2),
+                @intCast(h + MARGIN_PX * 2),
             };
             i += 1;
         }
@@ -262,7 +295,10 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
     i = 0;
     for (fonts) |*f| {
         for (0..f.ft_face.numGlyphs()) |j| {
-            try f.ft_face.loadGlyph(@intCast(j), .{ .render = true });
+            try f.ft_face.loadGlyph(@intCast(j), .{
+                .render = true,
+                .color = f.ft_face.hasColor(), // Later when adding OT SVG.
+            });
             const ft_glyph = f.ft_face.glyph();
             try f.glyphs.put(@intCast(j), GlyphInfo{
                 .x = packing.positions[i][0],
@@ -288,7 +324,9 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
                         }
                     }
                 },
-                else => unreachable,
+                else => {
+                    std.debug.print("Unsupported pixel mode: {d}\n", .{@intFromEnum(ft_bitmap.pixelMode())});
+                },
             }
             i += 1;
         }
