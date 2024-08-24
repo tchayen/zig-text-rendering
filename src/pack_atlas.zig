@@ -30,6 +30,7 @@ pub const Packing = struct {
 /// If the `area_factor` is too small the program will crash - this should be
 /// fixed.
 pub fn pack(allocator: std.mem.Allocator, sizes: [][2]i32, area_factor: f32) !Packing {
+    _ = area_factor; // autofix
     const positions = try allocator.alloc([2]i32, sizes.len);
 
     var area: f32 = 0;
@@ -47,7 +48,7 @@ pub fn pack(allocator: std.mem.Allocator, sizes: [][2]i32, area_factor: f32) !Pa
     }
     std.mem.sort(Rectangle, rectangles, {}, sortBySizeFn);
 
-    const approximateSize: i32 = @intCast(ceilPowerOfTwo(@intFromFloat(@ceil(@sqrt(area) * area_factor))));
+    const approximateSize: i32 = @intCast(ceilPowerOfTwo(@intFromFloat(@ceil(@sqrt(area)))));
 
     const root = try arena_allocator.create(Node);
     root.* = .{

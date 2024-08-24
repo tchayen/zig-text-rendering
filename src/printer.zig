@@ -24,6 +24,7 @@ const wgsl_vs =
     \\     return out;
     \\ }
 ;
+// TODO: now there's no support for colors as we are just rendering the RGBA of the atlas.
 const wgsl_fs =
     \\ struct VertexOut {
     \\     @builtin(position) position: vec4f,

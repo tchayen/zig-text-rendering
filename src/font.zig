@@ -7,6 +7,7 @@ const pack_atlas = @import("pack_atlas.zig");
 const icu4x = @import("icu4zig");
 const plutosvg = @import("plutosvg.zig");
 const stb_image_write = @import("stb_image_write");
+const stb_rect_pack = @import("stb_rect_pack");
 const lunasvg = @import("lunasvg.zig");
 
 /// Margin around each glyph in the atlas.
@@ -18,6 +19,8 @@ const FontMapping = enum(usize) {
     Latin = 0,
     Arabic = 1,
     Emoji = 2,
+    // Japanese = 2,
+    // Korean = 3,
 };
 
 const RGBA = struct { r: u8, g: u8, b: u8, a: u8 };
@@ -53,14 +56,25 @@ pub const Font = struct {
     hb_face: hb.Face,
     hb_font: hb.Font,
     glyphs: GlyphMap,
+
+    pub fn init(allocator: Allocator, ft_lib: *ft.Library, data: []const u8) !Font {
+        const ft_face = try ft_lib.createFaceMemory(data, 0);
+        const hb_face = hb.Face.fromFreetypeFace(ft_face);
+        const hb_font = hb.Font.init(hb_face);
+        return Font{
+            .ft_face = ft_face,
+            .hb_face = hb_face,
+            .hb_font = hb_font,
+            .glyphs = GlyphMap.init(allocator),
+        };
+    }
 };
 
 const latin = @embedFile("./assets/NotoSans-Regular.ttf");
-// const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
-// const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
 const ar = @embedFile("./assets/NotoSansArabic-Regular.ttf");
+const jp = @embedFile("./assets/NotoSansJP-Regular.ttf");
+const kr = @embedFile("./assets/NotoSansKR-Regular.ttf");
 const emoji = @embedFile("./assets/NotoColorEmoji-COLRv1.ttf");
-// const emoji_svg = @embedFile("./assets/NotoColorEmoji-SVG.otf");
 
 /// Font encapsulates FreeType and HarfBuzz logic for shaping text. Generates font atlas texture in the `init()` method.
 pub const FontLibrary = struct {
@@ -75,90 +89,25 @@ pub const FontLibrary = struct {
     dpr: u32,
 
     pub fn init(allocator: Allocator, gctx: *zgpu.GraphicsContext, dpr: u32) !FontLibrary {
-        const ft_lib = try ft.Library.init();
+        var ft_lib = try ft.Library.init();
         const v = ft_lib.version();
         std.debug.print("FreeType version: {d}.{d}.{d}\n", .{ v.major, v.minor, v.patch });
 
         var fonts = try allocator.alloc(Font, 3);
-
-        var i: usize = 0;
-        fonts[i].ft_face = try ft_lib.createFaceMemory(latin, 0);
-        fonts[i].hb_face = hb.Face.fromFreetypeFace(fonts[i].ft_face);
-        fonts[i].hb_font = hb.Font.init(fonts[i].hb_face);
-        i = 1;
-        fonts[i].ft_face = try ft_lib.createFaceMemory(ar, 0);
-        fonts[i].hb_face = hb.Face.fromFreetypeFace(fonts[i].ft_face);
-        fonts[i].hb_font = hb.Font.init(fonts[i].hb_face);
-        i = 2;
-        fonts[i].ft_face = try ft_lib.createFaceMemory(emoji, 0);
-        fonts[i].hb_face = hb.Face.fromFreetypeFace(fonts[i].ft_face);
-        fonts[i].hb_font = hb.Font.init(fonts[i].hb_face);
+        fonts[0] = try Font.init(allocator, &ft_lib, latin);
+        fonts[1] = try Font.init(allocator, &ft_lib, ar);
+        fonts[2] = try Font.init(allocator, &ft_lib, emoji);
+        // fonts[2] = try Font.init(allocator, &ft_lib, jp);
+        // fonts[3] = try Font.init(allocator, &ft_lib, kr);
 
         const hooks = plutosvg.c.plutosvg_ft_svg_hooks() orelse return error.PlutoSVG;
         try ft_lib.setProperty("ot-svg", "svg-hooks", hooks);
-        // try ft_lib.setProperty("ot-svg", "svg-hooks", &ft.SVGRendererHooks{
-        //     .init_svg = init_svg,
-        //     .free_svg = free_svg,
-        //     .render_svg = render_svg,
-        //     .preset_slot = preset_slot,
-        // });
 
         for (fonts) |*font| {
             try font.ft_face.setPixelSizes(0, font_size * dpr);
             const hb_font_size: i32 = font_size * @as(i32, @intCast(dpr)) * 64;
             font.hb_font.setScale(hb_font_size, hb_font_size);
             font.glyphs = GlyphMap.init(allocator);
-        }
-
-        {
-            try fonts[2].ft_face.setPixelSizes(0, 64);
-            const emoji_glyph = fonts[2].ft_face.getCharIndex(0x2764) orelse {
-                std.debug.print("No glyph for emoji\n", .{});
-                return error.MissingGlyph;
-            };
-            try fonts[2].ft_face.loadGlyph(emoji_glyph, .{ .render = true, .color = true });
-            const ft_bitmap = fonts[2].ft_face.glyph().bitmap();
-
-            std.debug.print("width: {d}, rows: {d}, pitch: {d}\n", .{
-                ft_bitmap.width(),
-                ft_bitmap.rows(),
-                ft_bitmap.pitch(),
-            });
-
-            // Allocate a new buffer for RGBA data
-            const width = ft_bitmap.width();
-            const height = ft_bitmap.rows();
-            var rgba_buffer = try std.heap.page_allocator.alloc(u8, width * height * 4);
-            defer std.heap.page_allocator.free(rgba_buffer);
-
-            // Convert BGRA to RGBA
-            const src: [*]const u8 = @ptrCast(ft_bitmap.buffer());
-            for (0..height) |y| {
-                for (0..width) |x| {
-                    const idx = (y * width + x) * 4;
-                    rgba_buffer[idx + 0] = src[idx + 2];
-                    rgba_buffer[idx + 1] = src[idx + 1];
-                    rgba_buffer[idx + 2] = src[idx + 0];
-                    rgba_buffer[idx + 3] = src[idx + 3];
-                }
-            }
-
-            // Save using stb_image_write.h
-            const result = stb_image_write.c.stbi_write_png(
-                "emoji.png",
-                @intCast(width),
-                @intCast(height),
-                4,
-                rgba_buffer.ptr,
-                @intCast(width * 4),
-            );
-            if (result == 0) {
-                std.debug.print("Failed to write emoji.png\n", .{});
-            } else {
-                std.debug.print("Wrote emoji.png\n", .{});
-            }
-
-            try fonts[2].ft_face.setPixelSizes(0, font_size * dpr);
         }
 
         const font_atlas = try generateFontAtlas(allocator, fonts);
@@ -291,6 +240,7 @@ fn scriptToFont(script: hb.Script) ?usize {
         hb.Script.common => @intFromEnum(FontMapping.Emoji),
         // hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
         // hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
+        // hb.Script.hangul => @intFromEnum(FontMapping.Korean),
         else => null,
     };
 }
@@ -367,9 +317,6 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
 
             switch (ft_bitmap.pixelMode()) {
                 .gray => {
-                    if (f == &fonts[2]) {
-                        // std.debug.print("Printing gray glyph for {d}", .{j});
-                    }
                     for (0..h) |y| {
                         for (0..w) |x| {
                             const buffer = ft_bitmap.buffer() orelse continue; // Why is it crashing if I take this out of the loop?
@@ -481,4 +428,11 @@ pub fn segment(allocator: Allocator, value: []const u8) ![]u32 {
         try segments.append(@intCast(s));
     }
     return segments.toOwnedSlice();
+}
+
+fn packWithStb() void {
+    const context: stb_rect_pack.c.stbrp_context = .{
+        .width = 4096,
+    };
+    stb_rect_pack.c.stbrp_init_target(&context);
 }

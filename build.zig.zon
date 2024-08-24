@@ -11,6 +11,7 @@
         .plutosvg = .{ .path = "external/plutosvg" },
         .lunasvg = .{ .path = "external/lunasvg" },
         .stb_image_write = .{ .path = "external/stb_image_write" },
+        .stb_rect_pack = .{ .path = "external/stb_rect_pack" },
         .icu4zig = .{
             .url = "https://codeberg.org/linusg/icu4zig/archive/84b6c77fcb3dbf08c3f8c03ba88ff2f7b3504c6f.tar.gz",
             .hash = "1220a3d479dc6b2c29e8edaa0413014867163050389977b479ec73d94032b384f69f",
