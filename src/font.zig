@@ -19,8 +19,7 @@ const FontMapping = enum(usize) {
     Latin = 0,
     Arabic = 1,
     Japanese = 2,
-    Korean = 3,
-    Emoji = 4,
+    Emoji = 3,
 };
 
 const RGBA = struct { r: u8, g: u8, b: u8, a: u8 };
@@ -100,12 +99,12 @@ pub const FontLibrary = struct {
         const v = ft_lib.version();
         std.debug.print("FreeType version: {d}.{d}.{d}\n", .{ v.major, v.minor, v.patch });
 
-        var fonts = try allocator.alloc(Font, 5);
+        var fonts = try allocator.alloc(Font, 4);
         fonts[0] = try Font.init(allocator, &ft_lib, latin);
         fonts[1] = try Font.init(allocator, &ft_lib, ar);
         fonts[2] = try Font.init(allocator, &ft_lib, jp);
-        fonts[3] = try Font.init(allocator, &ft_lib, kr);
-        fonts[4] = try Font.init(allocator, &ft_lib, emoji);
+        // fonts[3] = try Font.init(allocator, &ft_lib, kr);
+        fonts[3] = try Font.init(allocator, &ft_lib, emoji);
 
         const hooks = plutosvg.c.plutosvg_ft_svg_hooks() orelse return error.PlutoSVG;
         try ft_lib.setProperty("ot-svg", "svg-hooks", hooks);
@@ -122,15 +121,15 @@ pub const FontLibrary = struct {
 
         // Write the atlas to disk.
         {
-            // _ = stb_image_write.c.stbi_write_png(
-            //     "font_atlas.png",
-            //     @intCast(font_atlas.size),
-            //     @intCast(font_atlas.size),
-            //     4,
-            //     font_atlas.bitmap.ptr,
-            //     @intCast(font_atlas.size * 4),
-            // );
-            // logTime("Saving atlas to PNG");
+            _ = stb_image_write.c.stbi_write_png(
+                "font_atlas.png",
+                @intCast(font_atlas.size),
+                @intCast(font_atlas.size),
+                4,
+                font_atlas.bitmap.ptr,
+                @intCast(font_atlas.size * 4),
+            );
+            logTime("Saving atlas to PNG");
         }
 
         const atlas_texture = gctx.createTexture(.{
@@ -237,7 +236,7 @@ fn codepointToScript(codepoint: u64) hb.Script {
         0x0600...0x06FF => hb.Script.arabic,
         0x3041...0x3096 => hb.Script.hiragana,
         0x30A0...0x30FF => hb.Script.katakana,
-        0xAC00...0xD7AF, 0x1100...0x11FF, 0x3130...0x318F, 0xA960...0xA97F, 0xD7B0...0xD7FF => hb.Script.hangul,
+        // 0xAC00...0xD7AF, 0x1100...0x11FF, 0x3130...0x318F, 0xA960...0xA97F, 0xD7B0...0xD7FF => hb.Script.hangul,
         else => hb.Script.common,
     };
 }
@@ -251,7 +250,7 @@ fn scriptToFont(script: hb.Script) ?usize {
         hb.Script.common => @intFromEnum(FontMapping.Emoji),
         hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
         hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
-        hb.Script.hangul => @intFromEnum(FontMapping.Korean),
+        // hb.Script.hangul => @intFromEnum(FontMapping.Korean),
         else => null,
     };
 }
@@ -310,7 +309,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
     // const packing = try pack_atlas.pack(allocator, sizes, 1.1);
     // defer allocator.free(packing.positions);
 
-    const ATLAS_SIZE = 6400;
+    const ATLAS_SIZE = 8100;
     const packing = .{
         .size = ATLAS_SIZE,
         .positions = try packAtlas(allocator, sizes, ATLAS_SIZE),

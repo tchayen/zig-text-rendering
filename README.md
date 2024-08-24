@@ -34,13 +34,14 @@ zig build run
 - [x] Debug why arabic breaks font atlas (it was overlapping indexes between font faces).
 - [x] Retina support.
 - [x] OT SVG hooks.
-- [ ] SVG rendering.
+- [x] SVG rendering.
+- [x] Consider replacing atlas packing algorithm with skyline bottom-left.
+- [ ] Caching font atlas (texture and binary data).
 - [ ] Fix icu4zig compilation on Windows.
 - [ ] Detect if given unicode character is already present in the atlas and skip it. This is a solution for all font faces including latin alphabet.
 - [ ] Proper line breaking.
 - [ ] (optionally) contribute missing errors to `mach-freetype`.
 - [ ] Different text sizes in the atlas.
-- [ ] Consider replacing atlas packing algorithm with skyline bottom-left.
 
 ## External
 
