@@ -301,6 +301,12 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
     }
     logTime("Gathering sizes");
 
+    var total_area: i32 = 0;
+    for (sizes) |s| {
+        total_area += s[0] * s[1];
+    }
+    std.debug.print("Total area: {d}px\n", .{total_area});
+
     // const packing = try pack_atlas.pack(allocator, sizes, 1.1);
     // defer allocator.free(packing.positions);
 
