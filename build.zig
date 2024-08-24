@@ -64,6 +64,13 @@ pub fn build(b: *std.Build) void {
         exe.linkLibrary(plutosvg.artifact("plutosvg"));
     }
 
+    // lunasvg
+    {
+        const lunasvg = b.dependency("lunasvg", .{ .target = target, .optimize = optimize });
+        exe.addIncludePath(b.path("external/lunasvg/include"));
+        exe.linkLibrary(lunasvg.artifact("lunasvg"));
+    }
+
     // stb_image_write
     {
         const stb_image_write = b.dependency("stb_image_write", .{ .target = target, .optimize = optimize });

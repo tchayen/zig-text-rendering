@@ -9,6 +9,7 @@
         .zpool = .{ .path = "external/zpool" },
         .mach_freetype = .{ .path = "external/mach-freetype" },
         .plutosvg = .{ .path = "external/plutosvg" },
+        .lunasvg = .{ .path = "external/lunasvg" },
         .stb_image_write = .{ .path = "external/stb_image_write" },
         .icu4zig = .{
             .url = "https://codeberg.org/linusg/icu4zig/archive/84b6c77fcb3dbf08c3f8c03ba88ff2f7b3504c6f.tar.gz",
