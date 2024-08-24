@@ -77,6 +77,12 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addImport("stb_image_write", stb_image_write.module("stb_image_write"));
     }
 
+    // stb_rect_pack
+    {
+        const stb_rect_pack = b.dependency("stb_rect_pack", .{ .target = target, .optimize = optimize });
+        exe.root_module.addImport("stb_rect_pack", stb_rect_pack.module("stb_rect_pack"));
+    }
+
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

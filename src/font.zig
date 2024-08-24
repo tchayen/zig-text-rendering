@@ -18,9 +18,9 @@ const font_size = 18;
 const FontMapping = enum(usize) {
     Latin = 0,
     Arabic = 1,
-    Emoji = 2,
-    // Japanese = 2,
-    // Korean = 3,
+    Japanese = 2,
+    Korean = 3,
+    Emoji = 4,
 };
 
 const RGBA = struct { r: u8, g: u8, b: u8, a: u8 };
@@ -48,6 +48,13 @@ pub const GlyphInfo = struct {
     bearing_y: i32,
     pixel_mode: ft.PixelMode,
 };
+
+var last_step: i128 = 0;
+fn logTime(message: []const u8) void {
+    const now = std.time.nanoTimestamp();
+    std.debug.print("{s} took {d}ms\n", .{ message, @divTrunc(now - last_step, 1_000_000) });
+    last_step = now;
+}
 
 const GlyphMap = std.AutoHashMap(u32, GlyphInfo);
 
@@ -93,12 +100,12 @@ pub const FontLibrary = struct {
         const v = ft_lib.version();
         std.debug.print("FreeType version: {d}.{d}.{d}\n", .{ v.major, v.minor, v.patch });
 
-        var fonts = try allocator.alloc(Font, 3);
+        var fonts = try allocator.alloc(Font, 5);
         fonts[0] = try Font.init(allocator, &ft_lib, latin);
         fonts[1] = try Font.init(allocator, &ft_lib, ar);
-        fonts[2] = try Font.init(allocator, &ft_lib, emoji);
-        // fonts[2] = try Font.init(allocator, &ft_lib, jp);
-        // fonts[3] = try Font.init(allocator, &ft_lib, kr);
+        fonts[2] = try Font.init(allocator, &ft_lib, jp);
+        fonts[3] = try Font.init(allocator, &ft_lib, kr);
+        fonts[4] = try Font.init(allocator, &ft_lib, emoji);
 
         const hooks = plutosvg.c.plutosvg_ft_svg_hooks() orelse return error.PlutoSVG;
         try ft_lib.setProperty("ot-svg", "svg-hooks", hooks);
@@ -114,14 +121,17 @@ pub const FontLibrary = struct {
         defer allocator.free(font_atlas.bitmap);
 
         // Write the atlas to disk.
-        _ = stb_image_write.c.stbi_write_png(
-            "font_atlas.png",
-            @intCast(font_atlas.size),
-            @intCast(font_atlas.size),
-            4,
-            font_atlas.bitmap.ptr,
-            @intCast(font_atlas.size * 4),
-        );
+        {
+            // _ = stb_image_write.c.stbi_write_png(
+            //     "font_atlas.png",
+            //     @intCast(font_atlas.size),
+            //     @intCast(font_atlas.size),
+            //     4,
+            //     font_atlas.bitmap.ptr,
+            //     @intCast(font_atlas.size * 4),
+            // );
+            // logTime("Saving atlas to PNG");
+        }
 
         const atlas_texture = gctx.createTexture(.{
             .usage = .{ .texture_binding = true, .copy_dst = true },
@@ -140,6 +150,8 @@ pub const FontLibrary = struct {
             u8,
             font_atlas.bitmap,
         );
+
+        logTime("Uploading texture to GPU");
 
         return FontLibrary{
             .allocator = allocator,
@@ -203,8 +215,6 @@ pub const FontLibrary = struct {
                     continue;
                 };
 
-                std.debug.print("{d} {d} {d}\n", .{ info.codepoint, @intFromEnum(range.script), @intFromEnum(glyph.pixel_mode) });
-
                 try shapes.append(GlyphShape{
                     .x = cursor_x + (pos.x_offset >> 6) + glyph.bearing_x,
                     .y = cursor_y + (pos.y_offset >> 6) - glyph.bearing_y,
@@ -227,6 +237,7 @@ fn codepointToScript(codepoint: u64) hb.Script {
         0x0600...0x06FF => hb.Script.arabic,
         0x3041...0x3096 => hb.Script.hiragana,
         0x30A0...0x30FF => hb.Script.katakana,
+        0xAC00...0xD7AF, 0x1100...0x11FF, 0x3130...0x318F, 0xA960...0xA97F, 0xD7B0...0xD7FF => hb.Script.hangul,
         else => hb.Script.common,
     };
 }
@@ -238,9 +249,9 @@ fn scriptToFont(script: hb.Script) ?usize {
         hb.Script.devanagari => @intFromEnum(FontMapping.Latin),
         hb.Script.arabic => @intFromEnum(FontMapping.Arabic),
         hb.Script.common => @intFromEnum(FontMapping.Emoji),
-        // hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
-        // hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
-        // hb.Script.hangul => @intFromEnum(FontMapping.Korean),
+        hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
+        hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
+        hb.Script.hangul => @intFromEnum(FontMapping.Korean),
         else => null,
     };
 }
@@ -254,7 +265,7 @@ fn scriptToDirection(script: hb.Script) hb.Direction {
 
 /// Generate font atlas texture from the input fonts.
 fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, bitmap: []u8 } {
-    const start = std.time.nanoTimestamp();
+    logTime("Before init");
     var all_characters_len: u64 = 0;
     for (fonts) |f| {
         const count = f.ft_face.numGlyphs();
@@ -288,11 +299,19 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
             i += 1;
         }
     }
+    logTime("Gathering sizes");
 
-    const packing = try pack_atlas.pack(allocator, sizes, 1.1);
+    // const packing = try pack_atlas.pack(allocator, sizes, 1.1);
+    // defer allocator.free(packing.positions);
+
+    const ATLAS_SIZE = 6400;
+    const packing = .{
+        .size = ATLAS_SIZE,
+        .positions = try packAtlas(allocator, sizes, ATLAS_SIZE),
+    };
     defer allocator.free(packing.positions);
 
-    std.debug.print("Atlas size: {d}x{d}px\n", .{ packing.size, packing.size });
+    logTime("Packing atlas");
 
     const bitmap = try allocator.alloc(u8, @intCast(packing.size * packing.size * 4));
     @memset(bitmap, 0); // Clear the bitmap.
@@ -363,8 +382,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
         }
     }
 
-    const end = std.time.nanoTimestamp();
-    std.debug.print("Bitmap generation took {d}ms\n", .{@divTrunc(end - start, 1_000_000)});
+    logTime("Copying bitmaps");
 
     return .{ .size = packing.size, .bitmap = bitmap };
 }
@@ -430,9 +448,36 @@ pub fn segment(allocator: Allocator, value: []const u8) ![]u32 {
     return segments.toOwnedSlice();
 }
 
-fn packWithStb() void {
-    const context: stb_rect_pack.c.stbrp_context = .{
-        .width = 4096,
-    };
-    stb_rect_pack.c.stbrp_init_target(&context);
+fn packAtlas(allocator: Allocator, sizes: [][2]i32, size: comptime_int) ![][2]i32 {
+    const rectangles = try allocator.alloc(stb_rect_pack.c.stbrp_rect, sizes.len);
+    defer allocator.free(rectangles);
+
+    for (sizes, 0..) |s, i| {
+        rectangles[i] = .{
+            .id = @intCast(i),
+            .x = 0,
+            .y = 0,
+            .w = s[0],
+            .h = s[1],
+            .was_packed = 0,
+        };
+    }
+
+    const nodes = try allocator.alloc(stb_rect_pack.c.stbrp_node, size * 2);
+    defer allocator.free(nodes);
+
+    var context: stb_rect_pack.c.stbrp_context = .{};
+    stb_rect_pack.c.stbrp_init_target(@ptrCast(&context), size, size, nodes.ptr, @intCast(nodes.len));
+    const result = stb_rect_pack.c.stbrp_pack_rects(@ptrCast(&context), rectangles.ptr, @intCast(rectangles.len));
+
+    if (result == 0) {
+        return error.FailedToPackAtlas;
+    }
+
+    const positions = try allocator.alloc([2]i32, sizes.len);
+    for (rectangles, 0..) |rect, i| {
+        positions[i] = .{ rect.x, rect.y };
+    }
+
+    return positions;
 }

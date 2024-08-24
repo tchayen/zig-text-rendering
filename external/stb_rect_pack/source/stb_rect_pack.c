@@ -1,2 +1,2 @@
-#define STB_IMAGE_IMPLEMENTATION
+#define STB_RECT_PACK_IMPLEMENTATION
 #include "stb_rect_pack.h"
