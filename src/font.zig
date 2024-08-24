@@ -7,6 +7,7 @@ const pack_atlas = @import("pack_atlas.zig");
 const icu4x = @import("icu4zig");
 const plutosvg = @import("plutosvg.zig");
 const stb_image_write = @import("stb_image_write");
+const lunasvg = @import("lunasvg.zig");
 
 /// Margin around each glyph in the atlas.
 const MARGIN_PX = 1;
@@ -16,8 +17,7 @@ const font_size = 18;
 const FontMapping = enum(usize) {
     Latin = 0,
     Arabic = 1,
-    Japanese = 2,
-    Korean = 3,
+    Emoji = 2,
 };
 
 const RGBA = struct { r: u8, g: u8, b: u8, a: u8 };
@@ -43,6 +43,7 @@ pub const GlyphInfo = struct {
     height: i32,
     bearing_x: i32, // Offset from the left edge of the bitmap to where the glyph starts (in px).
     bearing_y: i32,
+    pixel_mode: ft.PixelMode,
 };
 
 const GlyphMap = std.AutoHashMap(u32, GlyphInfo);
@@ -95,49 +96,83 @@ pub const FontLibrary = struct {
 
         const hooks = plutosvg.c.plutosvg_ft_svg_hooks() orelse return error.PlutoSVG;
         try ft_lib.setProperty("ot-svg", "svg-hooks", hooks);
+        // try ft_lib.setProperty("ot-svg", "svg-hooks", &ft.SVGRendererHooks{
+        //     .init_svg = init_svg,
+        //     .free_svg = free_svg,
+        //     .render_svg = render_svg,
+        //     .preset_slot = preset_slot,
+        // });
 
         for (fonts) |*font| {
             try font.ft_face.setPixelSizes(0, font_size * dpr);
             const hb_font_size: i32 = font_size * @as(i32, @intCast(dpr)) * 64;
             font.hb_font.setScale(hb_font_size, hb_font_size);
             font.glyphs = GlyphMap.init(allocator);
-
-            std.debug.print("Font: {s}, hasColor: {s}, isScalable: {s}, isFixedWidth: {s} isSfnt: {s}\n", .{
-                font.ft_face.familyName() orelse "Unknown",
-                if (font.ft_face.hasColor()) "true" else "false",
-                if (font.ft_face.isScalable()) "true" else "false",
-                if (font.ft_face.isFixedWidth()) "true" else "false",
-                if (font.ft_face.isSfnt()) "true" else "false",
-            });
         }
 
         {
-            // Load glyph for character 0x1F600 (😀)
-            const emoji_glyph = fonts[2].ft_face.getCharIndex(0x1F600) orelse {
+            try fonts[2].ft_face.setPixelSizes(0, 64);
+            const emoji_glyph = fonts[2].ft_face.getCharIndex(0x2764) orelse {
                 std.debug.print("No glyph for emoji\n", .{});
                 return error.MissingGlyph;
             };
             try fonts[2].ft_face.loadGlyph(emoji_glyph, .{ .render = true, .color = true });
             const ft_bitmap = fonts[2].ft_face.glyph().bitmap();
 
+            std.debug.print("width: {d}, rows: {d}, pitch: {d}\n", .{
+                ft_bitmap.width(),
+                ft_bitmap.rows(),
+                ft_bitmap.pitch(),
+            });
+
+            // Allocate a new buffer for RGBA data
+            const width = ft_bitmap.width();
+            const height = ft_bitmap.rows();
+            var rgba_buffer = try std.heap.page_allocator.alloc(u8, width * height * 4);
+            defer std.heap.page_allocator.free(rgba_buffer);
+
+            // Convert BGRA to RGBA
+            const src: [*]const u8 = @ptrCast(ft_bitmap.buffer());
+            for (0..height) |y| {
+                for (0..width) |x| {
+                    const idx = (y * width + x) * 4;
+                    rgba_buffer[idx + 0] = src[idx + 2];
+                    rgba_buffer[idx + 1] = src[idx + 1];
+                    rgba_buffer[idx + 2] = src[idx + 0];
+                    rgba_buffer[idx + 3] = src[idx + 3];
+                }
+            }
+
             // Save using stb_image_write.h
             const result = stb_image_write.c.stbi_write_png(
                 "emoji.png",
-                @intCast(ft_bitmap.width()),
-                @intCast(ft_bitmap.rows()),
+                @intCast(width),
+                @intCast(height),
                 4,
-                @ptrCast(ft_bitmap.buffer()),
-                @as(i32, @intCast(ft_bitmap.width())) * 4,
+                rgba_buffer.ptr,
+                @intCast(width * 4),
             );
             if (result == 0) {
                 std.debug.print("Failed to write emoji.png\n", .{});
             } else {
                 std.debug.print("Wrote emoji.png\n", .{});
             }
+
+            try fonts[2].ft_face.setPixelSizes(0, font_size * dpr);
         }
 
         const font_atlas = try generateFontAtlas(allocator, fonts);
         defer allocator.free(font_atlas.bitmap);
+
+        // Write the atlas to disk.
+        _ = stb_image_write.c.stbi_write_png(
+            "font_atlas.png",
+            @intCast(font_atlas.size),
+            @intCast(font_atlas.size),
+            4,
+            font_atlas.bitmap.ptr,
+            @intCast(font_atlas.size * 4),
+        );
 
         const atlas_texture = gctx.createTexture(.{
             .usage = .{ .texture_binding = true, .copy_dst = true },
@@ -146,12 +181,12 @@ pub const FontLibrary = struct {
                 .height = font_atlas.size,
                 .depth_or_array_layers = 1,
             },
-            .format = zgpu.imageInfoToTextureFormat(1, 1, false),
+            .format = zgpu.imageInfoToTextureFormat(4, 1, false),
         });
 
         gctx.queue.writeTexture(
             .{ .texture = gctx.lookupResource(atlas_texture).? },
-            .{ .bytes_per_row = font_atlas.size, .rows_per_image = font_atlas.size },
+            .{ .bytes_per_row = font_atlas.size * 4, .rows_per_image = font_atlas.size },
             .{ .width = font_atlas.size, .height = font_atlas.size },
             u8,
             font_atlas.bitmap,
@@ -219,6 +254,8 @@ pub const FontLibrary = struct {
                     continue;
                 };
 
+                std.debug.print("{d} {d} {d}\n", .{ info.codepoint, @intFromEnum(range.script), @intFromEnum(glyph.pixel_mode) });
+
                 try shapes.append(GlyphShape{
                     .x = cursor_x + (pos.x_offset >> 6) + glyph.bearing_x,
                     .y = cursor_y + (pos.y_offset >> 6) - glyph.bearing_y,
@@ -228,16 +265,15 @@ pub const FontLibrary = struct {
                 cursor_y += pos.y_advance >> 6;
             }
         }
+        std.debug.print("\n", .{});
         return shapes.toOwnedSlice();
     }
 };
 
 fn codepointToScript(codepoint: u64) hb.Script {
     return switch (codepoint) {
-        0x0020...0x007F => hb.Script.latin,
-        0x00A0...0x00FF => hb.Script.latin,
-        0x0100...0x017F => hb.Script.latin,
-        0x0180...0x024F => hb.Script.latin,
+        0x0020...0x007F, 0x00A0...0x00FF, 0x0100...0x017F, 0x0180...0x024F => hb.Script.latin,
+        0x0400...0x04FF => hb.Script.cyrillic,
         0x0900...0x097F => hb.Script.devanagari,
         0x0600...0x06FF => hb.Script.arabic,
         0x3041...0x3096 => hb.Script.hiragana,
@@ -249,8 +285,10 @@ fn codepointToScript(codepoint: u64) hb.Script {
 fn scriptToFont(script: hb.Script) ?usize {
     return switch (script) {
         hb.Script.latin => @intFromEnum(FontMapping.Latin),
+        hb.Script.cyrillic => @intFromEnum(FontMapping.Latin),
         hb.Script.devanagari => @intFromEnum(FontMapping.Latin),
         hb.Script.arabic => @intFromEnum(FontMapping.Arabic),
+        hb.Script.common => @intFromEnum(FontMapping.Emoji),
         // hb.Script.hiragana => @intFromEnum(FontMapping.Japanese),
         // hb.Script.katakana => @intFromEnum(FontMapping.Japanese),
         else => null,
@@ -269,7 +307,9 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
     const start = std.time.nanoTimestamp();
     var all_characters_len: u64 = 0;
     for (fonts) |f| {
-        all_characters_len += f.ft_face.numGlyphs();
+        const count = f.ft_face.numGlyphs();
+        std.debug.print("{s} ({d})\n", .{ f.ft_face.familyName() orelse "Unknown", count });
+        all_characters_len += count;
     }
 
     std.debug.print("Total characters: {d}\n", .{all_characters_len});
@@ -281,7 +321,11 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
     var i: u32 = 0;
     for (fonts) |f| {
         for (0..f.ft_face.numGlyphs()) |j| {
-            try f.ft_face.loadGlyph(@intCast(j), .{});
+            // For regular font it's not necessary to render the glyph to get size but for OT SVG it is.
+            try f.ft_face.loadGlyph(@intCast(j), .{
+                .render = true,
+                .color = f.ft_face.hasColor(),
+            });
             const ft_glyph = f.ft_face.glyph();
             const ft_bitmap = ft_glyph.bitmap();
             const w = ft_bitmap.width();
@@ -300,7 +344,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
 
     std.debug.print("Atlas size: {d}x{d}px\n", .{ packing.size, packing.size });
 
-    const bitmap = try allocator.alloc(u8, @intCast(packing.size * packing.size));
+    const bitmap = try allocator.alloc(u8, @intCast(packing.size * packing.size * 4));
     @memset(bitmap, 0); // Clear the bitmap.
 
     // Once positions are known, we can generate the glyphs mapping and bitmap.
@@ -309,9 +353,55 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
         for (0..f.ft_face.numGlyphs()) |j| {
             try f.ft_face.loadGlyph(@intCast(j), .{
                 .render = true,
-                .color = f.ft_face.hasColor(), // Later when adding OT SVG.
+                .color = f.ft_face.hasColor(),
             });
             const ft_glyph = f.ft_face.glyph();
+
+            const position = packing.positions[i];
+            const packing_x: usize = @intCast(position[0]);
+            const packing_y: usize = @intCast(position[1]);
+            const ft_bitmap = ft_glyph.bitmap();
+
+            const h = ft_bitmap.rows();
+            const w = ft_bitmap.width();
+
+            switch (ft_bitmap.pixelMode()) {
+                .gray => {
+                    if (f == &fonts[2]) {
+                        // std.debug.print("Printing gray glyph for {d}", .{j});
+                    }
+                    for (0..h) |y| {
+                        for (0..w) |x| {
+                            const buffer = ft_bitmap.buffer() orelse continue; // Why is it crashing if I take this out of the loop?
+                            const src_index = y * w + x;
+                            const dst_index = ((packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX) * 4;
+
+                            bitmap[dst_index + 0] = 255;
+                            bitmap[dst_index + 1] = 255;
+                            bitmap[dst_index + 2] = 255;
+                            bitmap[dst_index + 3] = buffer[src_index];
+                        }
+                    }
+                },
+                .bgra => {
+                    for (0..h) |y| {
+                        for (0..w) |x| {
+                            const buffer = ft_bitmap.buffer() orelse continue;
+                            const src_index = (y * w + x) * 4;
+                            const dst_index = ((packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX) * 4;
+
+                            bitmap[dst_index + 0] = buffer[src_index + 2];
+                            bitmap[dst_index + 1] = buffer[src_index + 1];
+                            bitmap[dst_index + 2] = buffer[src_index + 0];
+                            bitmap[dst_index + 3] = buffer[src_index + 3];
+                        }
+                    }
+                },
+                else => {
+                    std.debug.print("Unsupported pixel mode: {d}\n", .{@intFromEnum(ft_bitmap.pixelMode())});
+                },
+            }
+
             try f.glyphs.put(@intCast(j), GlyphInfo{
                 .x = packing.positions[i][0],
                 .y = packing.positions[i][1],
@@ -319,39 +409,9 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
                 .height = sizes[i][1],
                 .bearing_x = ft_glyph.bitmapLeft() - MARGIN_PX,
                 .bearing_y = ft_glyph.bitmapTop() - MARGIN_PX,
+                .pixel_mode = ft_bitmap.pixelMode(),
             });
 
-            const position = packing.positions[i];
-            const packing_x: usize = @intCast(position[0]);
-            const packing_y: usize = @intCast(position[1]);
-            const ft_bitmap = ft_glyph.bitmap();
-            switch (ft_bitmap.pixelMode()) {
-                .gray => {
-                    for (0..ft_bitmap.rows()) |y| {
-                        for (0..ft_bitmap.width()) |x| {
-                            const index = (packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX;
-                            const buffer = ft_bitmap.buffer() orelse continue;
-                            const value = buffer[y * ft_bitmap.width() + x];
-                            bitmap[index] = value;
-                        }
-                    }
-                },
-                .bgra => {
-                    // TODO: what to do with font atlas?
-
-                    // for (0..ft_bitmap.rows()) |y| {
-                    //     for (0..ft_bitmap.width()) |x| {
-                    //         const index = (packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX;
-                    //         const buffer = ft_bitmap.buffer() orelse continue;
-                    //         const value = buffer[(y * ft_bitmap.width() + x) * 4];
-                    //         bitmap[index] = value;
-                    //     }
-                    // }
-                },
-                else => {
-                    std.debug.print("Unsupported pixel mode: {d}\n", .{@intFromEnum(ft_bitmap.pixelMode())});
-                },
-            }
             i += 1;
         }
     }
@@ -374,6 +434,7 @@ fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
     while (iterator.nextCodepointSlice()) |slice| {
         const codepoint = try std.unicode.utf8Decode(slice);
         const script = codepointToScript(codepoint);
+        std.debug.print("{X}\n", .{codepoint});
 
         if (current_range) |*range| {
             if (range.script == script) {
@@ -395,6 +456,7 @@ fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
         }
         byte_index += slice.len;
     }
+    std.debug.print("\n", .{});
 
     if (current_range) |range| {
         try ranges.append(range);

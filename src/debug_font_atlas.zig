@@ -23,8 +23,8 @@ const wgsl_fs =
     \\
     \\ @fragment
     \\ fn main(@builtin(position) position: vec4f, @location(0) uv: vec2f) -> @location(0) vec4f {
-    \\     let a = textureSample(myTexture, mySampler, uv).r;
-    \\     return vec4f(1, 1, 1, a);
+    \\     let color = textureSample(myTexture, mySampler, uv).rgba;
+    \\     return color;
     \\ }
 ;
 

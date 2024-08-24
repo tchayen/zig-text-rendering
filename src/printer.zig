@@ -34,8 +34,7 @@ const wgsl_fs =
     \\ @group(0) @binding(1) var s: sampler;
     \\
     \\ @fragment fn main(in: VertexOut) -> @location(0) vec4f {
-    \\     let a = textureSample(t, s, in.uv).r;
-    \\     return vec4f(vec3f(1), a);
+    \\     return textureSample(t, s, in.uv);
     \\ }
 ;
 
