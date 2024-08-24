@@ -6,6 +6,7 @@ const hb = @import("mach-harfbuzz");
 const pack_atlas = @import("pack_atlas.zig");
 const icu4x = @import("icu4zig");
 const plutosvg = @import("plutosvg.zig");
+const stb_image_write = @import("stb_image_write");
 
 /// Margin around each glyph in the atlas.
 const MARGIN_PX = 1;
@@ -92,22 +93,8 @@ pub const FontLibrary = struct {
         fonts[i].hb_face = hb.Face.fromFreetypeFace(fonts[i].ft_face);
         fonts[i].hb_font = hb.Font.init(fonts[i].hb_face);
 
-        const ft_emoji_face = try ft_lib.createFaceMemory(emoji, 0);
-        defer ft_emoji_face.deinit();
-        const hb_emoji_face = hb.Face.fromFreetypeFace(ft_emoji_face);
-        defer hb_emoji_face.deinit();
-
         const hooks = plutosvg.c.plutosvg_ft_svg_hooks() orelse return error.PlutoSVG;
         try ft_lib.setProperty("ot-svg", "svg-hooks", hooks);
-
-        // try ft_emoji_face.loadChar(0x1F600, .{ .color = true, .render = true });
-        // const ft_emoji_glyph = ft_emoji_face.glyph();
-        // const ft_emoji_bitmap = ft_emoji_glyph.bitmap();
-        // _ = ft_emoji_bitmap; // autofix
-
-        // fonts[2].ft_face = try ft_lib.createFaceMemory(jp, 0);
-        // fonts[2].hb_face = hb.Face.fromFreetypeFace(fonts[2].ft_face);
-        // fonts[2].hb_font = hb.Font.init(fonts[2].hb_face);
 
         for (fonts) |*font| {
             try font.ft_face.setPixelSizes(0, font_size * dpr);
@@ -122,6 +109,31 @@ pub const FontLibrary = struct {
                 if (font.ft_face.isFixedWidth()) "true" else "false",
                 if (font.ft_face.isSfnt()) "true" else "false",
             });
+        }
+
+        {
+            // Load glyph for character 0x1F600 (😀)
+            const emoji_glyph = fonts[2].ft_face.getCharIndex(0x1F600) orelse {
+                std.debug.print("No glyph for emoji\n", .{});
+                return error.MissingGlyph;
+            };
+            try fonts[2].ft_face.loadGlyph(emoji_glyph, .{ .render = true, .color = true });
+            const ft_bitmap = fonts[2].ft_face.glyph().bitmap();
+
+            // Save using stb_image_write.h
+            const result = stb_image_write.c.stbi_write_png(
+                "emoji.png",
+                @intCast(ft_bitmap.width()),
+                @intCast(ft_bitmap.rows()),
+                4,
+                @ptrCast(ft_bitmap.buffer()),
+                @as(i32, @intCast(ft_bitmap.width())) * 4,
+            );
+            if (result == 0) {
+                std.debug.print("Failed to write emoji.png\n", .{});
+            } else {
+                std.debug.print("Wrote emoji.png\n", .{});
+            }
         }
 
         const font_atlas = try generateFontAtlas(allocator, fonts);
@@ -323,6 +335,18 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
                             bitmap[index] = value;
                         }
                     }
+                },
+                .bgra => {
+                    // TODO: what to do with font atlas?
+
+                    // for (0..ft_bitmap.rows()) |y| {
+                    //     for (0..ft_bitmap.width()) |x| {
+                    //         const index = (packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX;
+                    //         const buffer = ft_bitmap.buffer() orelse continue;
+                    //         const value = buffer[(y * ft_bitmap.width() + x) * 4];
+                    //         bitmap[index] = value;
+                    //     }
+                    // }
                 },
                 else => {
                     std.debug.print("Unsupported pixel mode: {d}\n", .{@intFromEnum(ft_bitmap.pixelMode())});

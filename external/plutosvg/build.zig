@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
     lib.defineCMacro("PLUTOSVG_HAS_FREETYPE", "1");
     lib.addIncludePath(b.path("source"));
     lib.addIncludePath(b.path("../plutovg/include"));
+    lib.addIncludePath(b.path("../freetype/include"));
     lib.addCSourceFiles(.{ .files = &sources, .flags = &.{} });
     lib.installHeadersDirectory(b.path("source"), "plutosvg", .{});
 

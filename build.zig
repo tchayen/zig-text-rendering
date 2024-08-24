@@ -56,8 +56,19 @@ pub fn build(b: *std.Build) void {
         build_icu4zig.link(exe, icu4x);
     }
 
-    exe.addIncludePath(b.path("external/plutosvg/source"));
-    exe.addIncludePath(b.path("external/plutovg/include"));
+    // plutosvg
+    {
+        const plutosvg = b.dependency("plutosvg", .{ .target = target, .optimize = optimize });
+        exe.addIncludePath(b.path("external/plutosvg/source"));
+        exe.addIncludePath(b.path("external/plutovg/include"));
+        exe.linkLibrary(plutosvg.artifact("plutosvg"));
+    }
+
+    // stb_image_write
+    {
+        const stb_image_write = b.dependency("stb_image_write", .{ .target = target, .optimize = optimize });
+        exe.root_module.addImport("stb_image_write", stb_image_write.module("stb_image_write"));
+    }
 
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);

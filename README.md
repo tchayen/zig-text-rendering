@@ -42,6 +42,18 @@ zig build run
 - [ ] Different text sizes in the atlas.
 - [ ] Consider replacing atlas packing algorithm with skyline bottom-left.
 
+## External
+
+- `freetype` - needed for `plutosvg`.
+- `mach-freetype` - Zig bindings for FreeType and HarfBuzz.
+- `plutosvg` - SVG rendering for OT SVG.
+- `plutovg` - dependency of `plutosvg`.
+- `system-sdk` - dependency of `zgpu`.
+- `zglfw` - Zig bindings for GLFW.
+- `zgpu` - Zig bindings for WebGPU.
+- `zmath` - 3D math library.
+- `zpool` - dependency of `zgpu`.
+
 ## Links
 
 - [Overview of text rendering on Linux](https://mrandri19.github.io/2019/07/24/modern-text-rendering-linux-overview.html)
