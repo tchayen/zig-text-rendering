@@ -46,29 +46,22 @@ pub fn build(b: *std.Build) void {
 
     // icu4zig
     {
-        const icu4zig = b.dependency("icu4zig", .{ .target = target, .optimize = optimize });
-        exe.root_module.addImport("icu4zig", icu4zig.module("icu4zig"));
+        // const icu4zig = b.dependency("icu4zig", .{ .target = target, .optimize = optimize });
+        // exe.root_module.addImport("icu4zig", icu4zig.module("icu4zig"));
 
-        const icu4x = icu4zig.builder.dependency("icu4x", .{
-            .target = target,
-            .optimize = optimize,
-        });
-        build_icu4zig.link(exe, icu4x);
+        // const icu4x = icu4zig.builder.dependency("icu4x", .{
+        //     .target = target,
+        //     .optimize = optimize,
+        // });
+        // build_icu4zig.link(exe, icu4x);
     }
 
     // plutosvg
     {
         const plutosvg = b.dependency("plutosvg", .{ .target = target, .optimize = optimize });
-        exe.addIncludePath(b.path("external/plutosvg/source"));
+        exe.addIncludePath(b.path("external/plutosvg/include"));
         exe.addIncludePath(b.path("external/plutovg/include"));
         exe.linkLibrary(plutosvg.artifact("plutosvg"));
-    }
-
-    // lunasvg
-    {
-        const lunasvg = b.dependency("lunasvg", .{ .target = target, .optimize = optimize });
-        exe.addIncludePath(b.path("external/lunasvg/include"));
-        exe.linkLibrary(lunasvg.artifact("lunasvg"));
     }
 
     // stb_image_write

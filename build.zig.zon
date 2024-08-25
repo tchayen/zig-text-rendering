@@ -9,7 +9,6 @@
         .zpool = .{ .path = "external/zpool" },
         .mach_freetype = .{ .path = "external/mach-freetype" },
         .plutosvg = .{ .path = "external/plutosvg" },
-        .lunasvg = .{ .path = "external/lunasvg" },
         .stb_image_write = .{ .path = "external/stb_image_write" },
         .stb_rect_pack = .{ .path = "external/stb_rect_pack" },
         .icu4zig = .{

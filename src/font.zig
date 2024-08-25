@@ -3,11 +3,10 @@ const Allocator = std.mem.Allocator;
 const zgpu = @import("zgpu");
 const ft = @import("mach-freetype");
 const hb = @import("mach-harfbuzz");
-const icu4x = @import("icu4zig");
+// const icu4x = @import("icu4zig");
 const plutosvg = @import("plutosvg.zig");
 const stb_image_write = @import("stb_image_write");
 const stb_rect_pack = @import("stb_rect_pack");
-const lunasvg = @import("lunasvg.zig");
 
 /// Margin around each glyph in the atlas.
 const MARGIN_PX = 1;
@@ -431,19 +430,20 @@ fn getRanges(allocator: Allocator, value: []const u8) ![]Range {
 
 /// Segment text into words using ICU4X. Returns a slice of indices where words start or end.
 pub fn segment(allocator: Allocator, value: []const u8) ![]u32 {
-    const data_provider = icu4x.DataProvider.init();
-    defer data_provider.deinit();
+    _ = value; // autofix
+    // const data_provider = icu4x.DataProvider.init();
+    // defer data_provider.deinit();
 
-    const segmenter = icu4x.WordSegmenter.init(data_provider);
-    defer segmenter.deinit();
+    // const segmenter = icu4x.WordSegmenter.init(data_provider);
+    // defer segmenter.deinit();
 
-    var iterator = segmenter.segment(.{ .utf8 = value });
-    defer iterator.deinit();
+    // var iterator = segmenter.segment(.{ .utf8 = value });
+    // defer iterator.deinit();
 
     var segments = std.ArrayList(u32).init(allocator);
-    while (iterator.next()) |s| {
-        try segments.append(@intCast(s));
-    }
+    // while (iterator.next()) |s| {
+    //     try segments.append(@intCast(s));
+    // }
     return segments.toOwnedSlice();
 }
 
