@@ -11,11 +11,11 @@ pub fn build(b: *std.Build) void {
     });
 
     lib.linkLibC();
+    lib.defineCMacro("PLUTOVG_BUILD_STATIC", "1");
     lib.addIncludePath(b.path("include"));
     lib.addIncludePath(b.path("source"));
     lib.addIncludePath(b.path("stb"));
     lib.addCSourceFiles(.{ .files = &sources, .flags = &.{} });
-    // lib.installHeadersDirectory(b.path("include"), "plutovg", .{});
 
     b.installArtifact(lib);
 }
@@ -32,7 +32,4 @@ const sources = [_][]const u8{
     "source/plutovg-path.c",
     "source/plutovg-rasterize.c",
     "source/plutovg-surface.c",
-    // "stb/stb_image_write.h",
-    // "stb/stb_image.h",
-    // "stb/stb_truetype.h",
 };
