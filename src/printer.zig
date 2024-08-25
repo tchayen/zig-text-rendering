@@ -3,8 +3,9 @@ const Allocator = std.mem.Allocator;
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 const zm = @import("zmath");
-const FontLibrary = @import("font.zig").FontLibrary;
+const font = @import("font.zig");
 const utils = @import("utils.zig");
+const FontLibrary = font.FontLibrary;
 
 const wgsl_vs =
     \\ struct VertexIn {
@@ -197,8 +198,9 @@ pub const Printer = struct {
         var i: u32 = 0;
         for (0..self.command_count) |c| {
             const value = self.commands[c];
-            const glyphs = try self.font_library.shape(
+            const glyphs = try font.shape(
                 self.allocator,
+                self.font_library.fonts,
                 value.text,
                 300, //std.math.maxInt(i32),
             );

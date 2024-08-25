@@ -172,61 +172,62 @@ pub const FontLibrary = struct {
         self.ft_lib.deinit();
         self.gctx.releaseResource(self.atlas_texture);
     }
+};
 
-    pub fn shape(self: *FontLibrary, allocator: Allocator, value: []const u8, max_width: i32) ![]GlyphShape {
-        _ = max_width; // autofix
-        const ranges = try getRanges(allocator, value);
-        defer allocator.free(ranges);
+pub fn shape(allocator: Allocator, fonts: []Font, value: []const u8, max_width: i32) ![]GlyphShape {
+    _ = max_width; // autofix
+    const ranges = try getRanges(allocator, value);
+    defer allocator.free(ranges);
 
-        var shapes = std.ArrayList(GlyphShape).init(allocator);
-        var cursor_x: i32 = 0;
-        var cursor_y: i32 = 0;
+    var shapes = std.ArrayList(GlyphShape).init(allocator);
+    var cursor_x: i32 = 0;
+    var cursor_y: i32 = 0;
 
-        const segments = try segment(allocator, value);
-        defer allocator.free(segments);
+    const segments = try segment(allocator, value);
+    defer allocator.free(segments);
 
-        for (ranges) |range| {
-            var buffer = hb.Buffer.init() orelse return error.OutOfMemory;
-            defer buffer.deinit();
+    for (ranges) |range| {
+        var buffer = hb.Buffer.init() orelse return error.OutOfMemory;
+        defer buffer.deinit();
 
-            // buffer.guessSegmentProps();
-            // buffer.setLanguage(hb.Language.fromString("hi"));
-            buffer.setDirection(scriptToDirection(range.script));
-            buffer.setScript(range.script);
+        // buffer.guessSegmentProps();
+        // buffer.setLanguage(hb.Language.fromString("hi"));
+        buffer.setDirection(scriptToDirection(range.script));
+        buffer.setScript(range.script);
 
-            buffer.addUTF8(value[range.start .. range.end + 1], 0, null);
+        buffer.addUTF8(value[range.start .. range.end + 1], 0, null);
 
-            const fontId = scriptToFont(range.script) orelse {
-                std.debug.print("No font for script {d}\n", .{@intFromEnum(range.script)});
+        const fontId = scriptToFont(range.script) orelse {
+            std.debug.print("No font for script {d}\n", .{@intFromEnum(range.script)});
+            continue;
+        };
+
+        fonts[fontId].hb_font.shape(buffer, null);
+
+        const infos = buffer.getGlyphInfos();
+        const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
+
+        for (positions, infos) |pos, info| {
+            // After shaping info.codepoint is a glyph index not unicode point.
+            const glyph = fonts[fontId].glyphs.get(info.codepoint) orelse {
+                std.debug.print("No glyph for {d}\n", .{info.codepoint});
                 continue;
             };
 
-            self.fonts[fontId].hb_font.shape(buffer, null);
-
-            const infos = buffer.getGlyphInfos();
-            const positions = buffer.getGlyphPositions() orelse return error.OutOfMemory;
-
-            for (positions, infos) |pos, info| {
-                // After shaping info.codepoint is a glyph index not unicode point.
-                const glyph = self.fonts[fontId].glyphs.get(info.codepoint) orelse {
-                    std.debug.print("No glyph for {d}\n", .{info.codepoint});
-                    continue;
-                };
-
-                try shapes.append(GlyphShape{
-                    .x = cursor_x + (pos.x_offset >> 6) + glyph.bearing_x,
-                    .y = cursor_y + (pos.y_offset >> 6) - glyph.bearing_y,
-                    .glyph = glyph,
-                });
-                cursor_x += pos.x_advance >> 6;
-                cursor_y += pos.y_advance >> 6;
-            }
+            try shapes.append(GlyphShape{
+                .x = cursor_x + (pos.x_offset >> 6) + glyph.bearing_x,
+                .y = cursor_y + (pos.y_offset >> 6) - glyph.bearing_y,
+                .glyph = glyph,
+            });
+            cursor_x += pos.x_advance >> 6;
+            cursor_y += pos.y_advance >> 6;
         }
-        std.debug.print("\n", .{});
-        return shapes.toOwnedSlice();
     }
-};
+    std.debug.print("\n", .{});
+    return shapes.toOwnedSlice();
+}
 
+/// Map Unicode codepoint to HarfBuzz script that will be used for shaping.
 fn codepointToScript(codepoint: u64) hb.Script {
     return switch (codepoint) {
         0x0020...0x007F, 0x00A0...0x00FF, 0x0100...0x017F, 0x0180...0x024F => hb.Script.latin,
@@ -240,6 +241,7 @@ fn codepointToScript(codepoint: u64) hb.Script {
     };
 }
 
+/// Map HarfBuzz script to font index.
 fn scriptToFont(script: hb.Script) ?usize {
     return switch (script) {
         hb.Script.latin => @intFromEnum(FontMapping.Latin),
@@ -254,9 +256,10 @@ fn scriptToFont(script: hb.Script) ?usize {
     };
 }
 
+/// Map HarfBuzz script to text direction.
 fn scriptToDirection(script: hb.Script) hb.Direction {
     return switch (script) {
-        hb.Script.arabic => hb.Direction.rtl,
+        hb.Script.arabic, hb.Script.hebrew => hb.Direction.rtl,
         else => hb.Direction.ltr,
     };
 }
@@ -299,6 +302,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
     }
     logTime("Gathering sizes");
 
+    // This is purely for debugging.
     var total_area: i32 = 0;
     for (sizes) |s| {
         total_area += s[0] * s[1];
@@ -321,10 +325,7 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
     i = 0;
     for (fonts) |*f| {
         for (0..f.ft_face.numGlyphs()) |j| {
-            try f.ft_face.loadGlyph(@intCast(j), .{
-                .render = true,
-                .color = f.ft_face.hasColor(),
-            });
+            try f.ft_face.loadGlyph(@intCast(j), .{ .render = true, .color = f.ft_face.hasColor() });
             const ft_glyph = f.ft_face.glyph();
 
             const position = packing.positions[i];
@@ -340,13 +341,13 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
                     for (0..h) |y| {
                         for (0..w) |x| {
                             const buffer = ft_bitmap.buffer() orelse continue; // Why is it crashing if I take this out of the loop?
-                            const src_index = y * w + x;
-                            const dst_index = ((packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX) * 4;
+                            const src = y * w + x;
+                            const dst = ((packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX) * 4;
 
-                            bitmap[dst_index + 0] = 255;
-                            bitmap[dst_index + 1] = 255;
-                            bitmap[dst_index + 2] = 255;
-                            bitmap[dst_index + 3] = buffer[src_index];
+                            bitmap[dst + 0] = 255;
+                            bitmap[dst + 1] = 255;
+                            bitmap[dst + 2] = 255;
+                            bitmap[dst + 3] = buffer[src];
                         }
                     }
                 },
@@ -354,19 +355,17 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
                     for (0..h) |y| {
                         for (0..w) |x| {
                             const buffer = ft_bitmap.buffer() orelse continue;
-                            const src_index = (y * w + x) * 4;
-                            const dst_index = ((packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX) * 4;
+                            const src = (y * w + x) * 4;
+                            const dst = ((packing_y + y + MARGIN_PX) * packing.size + packing_x + x + MARGIN_PX) * 4;
 
-                            bitmap[dst_index + 0] = buffer[src_index + 2];
-                            bitmap[dst_index + 1] = buffer[src_index + 1];
-                            bitmap[dst_index + 2] = buffer[src_index + 0];
-                            bitmap[dst_index + 3] = buffer[src_index + 3];
+                            bitmap[dst + 0] = buffer[src + 2];
+                            bitmap[dst + 1] = buffer[src + 1];
+                            bitmap[dst + 2] = buffer[src + 0];
+                            bitmap[dst + 3] = buffer[src + 3];
                         }
                     }
                 },
-                else => {
-                    std.debug.print("Unsupported pixel mode: {d}\n", .{@intFromEnum(ft_bitmap.pixelMode())});
-                },
+                else => unreachable,
             }
 
             try f.glyphs.put(@intCast(j), GlyphInfo{
@@ -382,7 +381,6 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
             i += 1;
         }
     }
-
     logTime("Copying bitmaps");
 
     return .{ .size = packing.size, .bitmap = bitmap };
@@ -449,6 +447,7 @@ pub fn segment(allocator: Allocator, value: []const u8) ![]u32 {
     return segments.toOwnedSlice();
 }
 
+/// Wrapper for calling stb_rect_pack.
 fn packAtlas(allocator: Allocator, sizes: [][2]i32, size: comptime_int) ![][2]i32 {
     const rectangles = try allocator.alloc(stb_rect_pack.c.stbrp_rect, sizes.len);
     defer allocator.free(rectangles);
