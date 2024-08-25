@@ -3,7 +3,6 @@ const Allocator = std.mem.Allocator;
 const zgpu = @import("zgpu");
 const ft = @import("mach-freetype");
 const hb = @import("mach-harfbuzz");
-const pack_atlas = @import("pack_atlas.zig");
 const icu4x = @import("icu4zig");
 const plutosvg = @import("plutosvg.zig");
 const stb_image_write = @import("stb_image_write");
@@ -121,15 +120,15 @@ pub const FontLibrary = struct {
 
         // Write the atlas to disk.
         {
-            _ = stb_image_write.c.stbi_write_png(
-                "font_atlas.png",
-                @intCast(font_atlas.size),
-                @intCast(font_atlas.size),
-                4,
-                font_atlas.bitmap.ptr,
-                @intCast(font_atlas.size * 4),
-            );
-            logTime("Saving atlas to PNG");
+            // _ = stb_image_write.c.stbi_write_png(
+            //     "font_atlas.png",
+            //     @intCast(font_atlas.size),
+            //     @intCast(font_atlas.size),
+            //     4,
+            //     font_atlas.bitmap.ptr,
+            //     @intCast(font_atlas.size * 4),
+            // );
+            // logTime("Saving atlas to PNG");
         }
 
         const atlas_texture = gctx.createTexture(.{
@@ -305,9 +304,6 @@ fn generateFontAtlas(allocator: Allocator, fonts: []Font) !struct { size: u32, b
         total_area += s[0] * s[1];
     }
     std.debug.print("Total area: {d}px\n", .{total_area});
-
-    // const packing = try pack_atlas.pack(allocator, sizes, 1.1);
-    // defer allocator.free(packing.positions);
 
     const ATLAS_SIZE = 8100;
     const packing = .{

@@ -42,6 +42,7 @@ zig build run
 - [ ] Proper line breaking.
 - [ ] (optionally) contribute missing errors to `mach-freetype`.
 - [ ] Different text sizes in the atlas.
+- [ ] Text selection.
 
 ## External
 
